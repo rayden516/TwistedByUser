@@ -904,7 +904,7 @@ RunService.Heartbeat:Connect(function()
         else
             removeTornado(key)
         end
-    endz
+    end
 
     -- Probe ESP — update only, auto-loop handles add/remove
     for key, entry in pairs(probeESPs) do
