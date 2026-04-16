@@ -1,5 +1,6 @@
 -- =============================================
 -- Storm Tracker — Tornado + Probe ESP + Freeze + Tween
+-- Clean rewrite (no duplicates or corruption)
 -- =============================================
 
 local RunService  = game:GetService("RunService")
@@ -8,7 +9,7 @@ local LocalPlayer = Players.LocalPlayer
 local Camera      = workspace.CurrentCamera
 
 -- =============================================
--- USERID FROM MEMORY credits: egowho in matcha <3
+-- USERID FROM MEMORY
 -- =============================================
 
 local function getUserIdFromMemory()
@@ -884,7 +885,7 @@ RunService.RenderStepped:Connect(function()
 end)
 
 -- =============================================
--- Update ESP
+-- HEARTBEAT — Update ESP
 -- =============================================
 
 RunService.Heartbeat:Connect(function()
@@ -912,7 +913,7 @@ RunService.Heartbeat:Connect(function()
             updateProbe(entry, playerPos)
         end
     end
-end
+end)
 
 -- =============================================
 -- SCAN LOOP
