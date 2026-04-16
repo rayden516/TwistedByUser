@@ -912,7 +912,7 @@ RunService.Heartbeat:Connect(function()
             updateProbe(entry, playerPos)
         end
     end
-end)
+end
 
 -- =============================================
 -- SCAN LOOP
