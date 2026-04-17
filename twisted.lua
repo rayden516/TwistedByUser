@@ -1,6 +1,5 @@
 -- =============================================
 -- Storm Tracker — Tornado + Probe ESP + Freeze + Tween
--- Clean rewrite (no duplicates or corruption)
 -- =============================================
 
 local RunService  = game:GetService("RunService")
@@ -9,7 +8,7 @@ local LocalPlayer = Players.LocalPlayer
 local Camera      = workspace.CurrentCamera
 
 -- =============================================
--- USERID FROM MEMORY
+-- USERID FROM MEMORY Credits to egowho in matcha discord server <3
 -- =============================================
 
 local function getUserIdFromMemory()
