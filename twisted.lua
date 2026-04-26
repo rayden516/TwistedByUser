@@ -7,20 +7,22 @@ local findProbePart, scanProbes, updateProbeEsp
 local myUserId = "0"
 pcall(function()
     local base = getbase()
-    local dm = memory_read("uintptr_t", memory_read("uintptr_t", base + 0x7B990F8) + 0x1D0)
-    local function getChild(parent, name)
-        local ptr = memory_read("uintptr_t", parent + 0x78)
-        if ptr == 0 then return nil end
-        local s, e = memory_read("uintptr_t", ptr), memory_read("uintptr_t", ptr + 0x8)
-        for i = 0, (e - s) / 8 - 1 do
-            local c = memory_read("uintptr_t", s + i * 8)
-            if memory_read("string", memory_read("uintptr_t", c + 0xB0)) == name then return c end
-        end
+local dm = memory_read("uintptr_t", memory_read("uintptr_t", base + 0x7B87A18) + 0x1D0)
+
+local function getChild(parent, name)
+    local ptr = memory_read("uintptr_t", parent + 0x78)
+    if ptr == 0 then return nil end
+    local s, e = memory_read("uintptr_t", ptr), memory_read("uintptr_t", ptr + 0x8)
+    for i = 0, (e - s) / 8 - 1 do
+        local c = memory_read("uintptr_t", s + i * 8)
+        if memory_read("string", memory_read("uintptr_t", c + 0xB0)) == name then return c end
     end
-    local lp = memory_read("uintptr_t", getChild(dm, "Players") + 0x130)
-    local userId = memory_read("uintptr_t", lp + 0x2C8)
-    myUserId = tostring(userId)
-end)
+end
+
+local lp = memory_read("uintptr_t", getChild(dm, "Players") + 0x130)
+local userId = memory_read("uintptr_t", lp + 0x2C8)
+myUserId = tostring(userId)
+
 print("[Storm Tracker] UserId:", myUserId)
 
 local cfg = {
