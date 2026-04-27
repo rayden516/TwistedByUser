@@ -7,7 +7,7 @@ local findProbePart, scanProbes, updateProbeEsp
 local myUserId = "0"
 pcall(function()
     local base = getbase()
-    local dm = memory_read("uintptr_t", memory_read("uintptr_t", base + 0x7B990F8) + 0x1D0)
+    local dm = memory_read("uintptr_t", memory_read("uintptr_t", base + 0x7B991D8) + 0x1D0)
     local function getChild(parent, name)
         local ptr = memory_read("uintptr_t", parent + 0x78)
         if ptr == 0 then return nil end
