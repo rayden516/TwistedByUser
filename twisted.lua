@@ -29,6 +29,7 @@ local cfg = {
     CarFreeze       = { Enabled = false },
     CharacterFreeze = { Enabled = false },
     CarBoost        = { Enabled = false, Force = 50000 },
+    CarBrake        = { Enabled = false, Force = 5000 },
     Tornado = {
         ShowBox    = true,
         ShowLine   = true,
@@ -217,19 +218,17 @@ function findProbePart(probe)
     if not probe or not probe:IsA("Model") then return nil end
     local mesh = probe:FindFirstChild("mesh")
     if not mesh then return nil end
+    local fallbackMesh, fallbackBase = nil, nil
     for _, child in ipairs(mesh:GetChildren()) do
-        if child:IsA("MeshPart") and child.Name:find("Tower Probe_Cylinder") then return child end
-    end
-    for _, child in ipairs(mesh:GetChildren()) do
-        if child:IsA("MeshPart") then return child end
-    end
-    for _, child in ipairs(mesh:GetChildren()) do
-        if child:IsA("BasePart") then
-            local ok, p = pcall(function() return child.Position end)
-            if ok and p then return child end
+        if child:IsA("MeshPart") then
+            if child.Name:find("Tower Probe_Cylinder") then return child end
+            if not fallbackMesh then fallbackMesh = child end
+        elseif child:IsA("BasePart") and not fallbackBase then
+            local ok, _ = pcall(function() return child.Position end)
+            if ok then fallbackBase = child end
         end
     end
-    return nil
+    return fallbackMesh or fallbackBase
 end
 
 local function clearTornadoKey(key)
@@ -506,40 +505,50 @@ end
 
 local function readPos(prim)
     local base = prim + OFF_CF + OFF_POS
-    local ok1, x = pcall(memory_read, "float", base)
-    local ok2, y = pcall(memory_read, "float", base + 0x4)
-    local ok3, z = pcall(memory_read, "float", base + 0x8)
-    if not ok1 or not ok2 or not ok3 then return nil end
+    local ok, x, y, z = pcall(function()
+        return memory_read("float", base),
+               memory_read("float", base + 0x4),
+               memory_read("float", base + 0x8)
+    end)
+    if not ok then return nil end
     return Vector3.new(x, y, z)
 end
 
 local function writePos(prim, pos)
     local base = prim + OFF_CF + OFF_POS
-    pcall(memory_write, "float", base,       pos.X)
-    pcall(memory_write, "float", base + 0x4, pos.Y)
-    pcall(memory_write, "float", base + 0x8, pos.Z)
+    pcall(function()
+        memory_write("float", base,       pos.X)
+        memory_write("float", base + 0x4, pos.Y)
+        memory_write("float", base + 0x8, pos.Z)
+    end)
 end
 
 local function zeroVel(prim)
     local base = prim + OFF_VEL
-    pcall(memory_write, "float", base,       0)
-    pcall(memory_write, "float", base + 0x4, 0)
-    pcall(memory_write, "float", base + 0x8, 0)
+    pcall(function()
+        memory_write("float", base,       0)
+        memory_write("float", base + 0x4, 0)
+        memory_write("float", base + 0x8, 0)
+    end)
 end
 
 local function writeVel(prim, vel)
     local base = prim + OFF_VEL
-    pcall(memory_write, "float", base,       vel.X)
-    pcall(memory_write, "float", base + 0x4, vel.Y)
-    pcall(memory_write, "float", base + 0x8, vel.Z)
+    pcall(function()
+        memory_write("float", base,       vel.X)
+        memory_write("float", base + 0x4, vel.Y)
+        memory_write("float", base + 0x8, vel.Z)
+    end)
 end
 
 local function readVel(prim)
     local base = prim + OFF_VEL
-    local ok1, x = pcall(memory_read, "float", base)
-    local ok2, y = pcall(memory_read, "float", base + 0x4)
-    local ok3, z = pcall(memory_read, "float", base + 0x8)
-    if not ok1 or not ok2 or not ok3 then return nil end
+    local ok, x, y, z = pcall(function()
+        return memory_read("float", base),
+               memory_read("float", base + 0x4),
+               memory_read("float", base + 0x8)
+    end)
+    if not ok then return nil end
     return Vector3.new(x, y, z)
 end
 
@@ -743,38 +752,63 @@ local function goToProbeByRank(rank)
     tweenToTarget(entry.pos, true)
 end
 
-local freeze = { chassis = nil, lockedPos = nil, prim = nil, active = false }
+local carCache = { chassis = nil, prim = nil }
 
-local function getPlayerChassis()
-    local char = LocalPlayer.Character
-    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return nil end
+local function invalidateCarCache()
+    carCache.chassis = nil
+    carCache.prim    = nil
+end
+
+local function findCurrentChassis()
+    if carCache.chassis and carCache.chassis.Parent then
+        return carCache.chassis
+    end
     local pr   = workspace:FindFirstChild("player_related")
     local cars = pr and pr:FindFirstChild("cars")
-    if not cars then return nil end
-    local pp = hrp.Position
-    for _, car in ipairs(cars:GetChildren()) do
-        if car:IsA("Model") then
-            local ch = car:FindFirstChild("chassis")
-            if ch and ch:IsA("BasePart") then
-                local ok, cp = pcall(function() return ch.Position end)
-                if ok and cp and (cp - pp).Magnitude < 10 then return ch end
-            end
+    if not cars then invalidateCarCache(); return nil end
+    local car = cars:FindFirstChild(myUserId)
+    if not car then invalidateCarCache(); return nil end
+    for _, desc in ipairs(car:GetDescendants()) do
+        if desc:IsA("BasePart") and desc.Name == "chassis" then
+            carCache.chassis = desc
+            carCache.prim    = nil
+            return desc
         end
     end
+    invalidateCarCache()
     return nil
 end
 
+local function findCurrentPrim()
+    if carCache.prim and carCache.chassis and carCache.chassis.Parent then
+        return carCache.prim
+    end
+    local ch = findCurrentChassis()
+    if not ch then return nil end
+    carCache.prim = readPrim(ch)
+    return carCache.prim
+end
+
+local freeze = { chassis = nil, lockedPos = nil, lockedRot = nil, prim = nil, active = false }
+
 local function applyCarFreeze()
     if freeze.active then return end
-    local ch = getPlayerChassis()
+    local ch = findCurrentChassis()
     if not ch then return end
     local prim = readPrim(ch)
     if not prim then return end
     local pos = readPos(prim)
     if not pos then return end
+    local rot = {}
+    local ok = pcall(function()
+        for i = 0, 8 do
+            rot[i + 1] = memory_read("float", prim + OFF_CF_ROT + i * 4)
+        end
+    end)
+    if not ok then return end
     freeze.chassis   = ch
     freeze.lockedPos = pos
+    freeze.lockedRot = rot
     freeze.prim      = prim
     freeze.active    = true
 end
@@ -782,6 +816,7 @@ end
 local function releaseCarFreeze()
     freeze.chassis   = nil
     freeze.lockedPos = nil
+    freeze.lockedRot = nil
     freeze.prim      = nil
     freeze.active    = false
 end
@@ -792,131 +827,138 @@ local function safeZeroVelocity(part)
     if prim then zeroVel(prim) end
 end
 
-local boost       = { chassis = nil, prim = nil }
-local boostWidget = nil
-
-local function getBoostChassis()
-    local char = LocalPlayer.Character
-    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return nil, nil end
-    local pr   = workspace:FindFirstChild("player_related")
-    local cars = pr and pr:FindFirstChild("cars")
-    if not cars then return nil, nil end
-    local pp = hrp.Position
-    for _, car in ipairs(cars:GetChildren()) do
-        if car:IsA("Model") then
-            local ch = car:FindFirstChild("chassis")
-            if ch and ch:IsA("BasePart") then
-                local ok, cp = pcall(function() return ch.Position end)
-                if ok and cp and (cp - pp).Magnitude < 10 then
-                    return ch, readPrim(ch)
-                end
-            end
-        end
-    end
-    return nil, nil
-end
+local boostWidget  = nil
+local brakeWidget  = nil
 
 local function applyCarBoost()
-    local ch, prim = getBoostChassis()
-    if not ch or not prim then return end
-    boost.chassis = ch
-    boost.prim    = prim
-
+    local prim = findCurrentPrim()
+    if not prim then return end
+    local ch = carCache.chassis
+    if not ch then return end
     local ok, lv = pcall(function() return ch.CFrame.LookVector end)
     if not ok or not lv then return end
 
     local curVel = readVel(prim)
     local vy     = curVel and curVel.Y or 0
-    local speed  = cfg.CarBoost.Force * 0.016
-
-    writeVel(prim, Vector3.new(lv.X * speed, vy, lv.Z * speed))
+    local target = cfg.CarBoost.Force * 0.016
+    local vx     = lv.X * target
+    local vz     = lv.Z * target
+    if curVel then
+        vx = curVel.X + (vx - curVel.X) * 0.25
+        vz = curVel.Z + (vz - curVel.Z) * 0.25
+    end
+    writeVel(prim, Vector3.new(vx, vy, vz))
+    pcall(function()
+        memory_write("float", prim + 0xFC,       0)
+        memory_write("float", prim + 0xFC + 0x4, 0)
+        memory_write("float", prim + 0xFC + 0x8, 0)
+    end)
 end
 
-local function saveColor(prefix, color)
-    if not color then return end
-    pcall(function() UI.SetValue(prefix .. "R", tostring(color.R)) end)
-    pcall(function() UI.SetValue(prefix .. "G", tostring(color.G)) end)
-    pcall(function() UI.SetValue(prefix .. "B", tostring(color.B)) end)
+local function applyCarBrake()
+    local prim = findCurrentPrim()
+    if not prim then return end
+    local vel = readVel(prim)
+    if not vel then return end
+    local hSpeed = math.sqrt(vel.X * vel.X + vel.Z * vel.Z)
+    if hSpeed < 0.5 then
+        writeVel(prim, Vector3.new(0, vel.Y, 0))
+        return
+    end
+    local decel    = cfg.CarBrake.Force * 0.016
+    local newSpeed = math.max(0, hSpeed - decel)
+    local ratio    = newSpeed / hSpeed
+    writeVel(prim, Vector3.new(vel.X * ratio, vel.Y, vel.Z * ratio))
 end
 
-local function loadColor(prefix, default)
-    local ok1, r = pcall(function() return UI.GetValue(prefix .. "R") end)
-    local ok2, g = pcall(function() return UI.GetValue(prefix .. "G") end)
-    local ok3, b = pcall(function() return UI.GetValue(prefix .. "B") end)
-    local nr     = ok1 and tonumber(r)
-    local ng     = ok2 and tonumber(g)
-    local nb     = ok3 and tonumber(b)
-    if nr == nil then nr = default.R end
-    if ng == nil then ng = default.G end
-    if nb == nil then nb = default.B end
-    return Color3.new(
-        math.clamp(nr, 0, 1),
-        math.clamp(ng, 0, 1),
-        math.clamp(nb, 0, 1)
-    )
-end
+local CONFIG_FILE = "storm_tracker_cfg.json"
 
 local function saveConfig()
-    local t = cfg.Tornado
-    local p = cfg.Probe
-    pcall(function() UI.SetValue("cfg_TornadoESP",  cfg.TornadoESP.Visible      and "1" or "0") end)
-    pcall(function() UI.SetValue("cfg_ProbeESP",    cfg.ProbeESP.Visible        and "1" or "0") end)
-    pcall(function() UI.SetValue("cfg_CarBoost",    cfg.CarBoost.Enabled        and "1" or "0") end)
-    pcall(function() UI.SetValue("cfg_CarFreeze",   cfg.CarFreeze.Enabled       and "1" or "0") end)
-    pcall(function() UI.SetValue("cfg_CharFreeze",  cfg.CharacterFreeze.Enabled and "1" or "0") end)
-    pcall(function() UI.SetValue("cfg_T_Box",        t.ShowBox    and "1" or "0") end)
-    pcall(function() UI.SetValue("cfg_T_Line",       t.ShowLine   and "1" or "0") end)
-    pcall(function() UI.SetValue("cfg_T_Circle",     t.ShowCircle and "1" or "0") end)
-    saveColor("cfg_TBoxC_",    t.BoxColor)
-    saveColor("cfg_TLineC_",   t.LineColor)
-    saveColor("cfg_TCircleC_", t.CircleColor)
-    saveColor("cfg_TTextC_",   t.TextColor)
-    saveColor("cfg_PBoxC_",    p.BoxColor)
-    saveColor("cfg_PTextC_",   p.TextColor)
-    pcall(function() UI.SetValue("cfg_TweenSpeed",  tostring(cfg.Tween.Speed))    end)
-    pcall(function() UI.SetValue("cfg_TweenHeight", tostring(cfg.Tween.Height))   end)
-    pcall(function() UI.SetValue("cfg_TweenOffset", tostring(cfg.Tween.Offset))   end)
-    pcall(function() UI.SetValue("cfg_BoostForce",  tostring(cfg.CarBoost.Force)) end)
+    local t    = cfg.Tornado
+    local p    = cfg.Probe
+    local data = {
+        TornadoESP  = cfg.TornadoESP.Visible,
+        ProbeESP    = cfg.ProbeESP.Visible,
+        CarBoost    = cfg.CarBoost.Enabled,
+        CarBrake    = cfg.CarBrake.Enabled,
+        CarFreeze   = cfg.CarFreeze.Enabled,
+        CharFreeze  = cfg.CharacterFreeze.Enabled,
+        T_Box       = t.ShowBox,
+        T_Line      = t.ShowLine,
+        T_Circle    = t.ShowCircle,
+        TBoxC       = { t.BoxColor.R,    t.BoxColor.G,    t.BoxColor.B    },
+        TLineC      = { t.LineColor.R,   t.LineColor.G,   t.LineColor.B   },
+        TCircleC    = { t.CircleColor.R, t.CircleColor.G, t.CircleColor.B },
+        TTextC      = { t.TextColor.R,   t.TextColor.G,   t.TextColor.B   },
+        PBoxC       = { p.BoxColor.R,    p.BoxColor.G,    p.BoxColor.B    },
+        PTextC      = { p.TextColor.R,   p.TextColor.G,   p.TextColor.B   },
+        TweenSpeed  = cfg.Tween.Speed,
+        TweenHeight = cfg.Tween.Height,
+        TweenOffset = cfg.Tween.Offset,
+        BoostForce  = cfg.CarBoost.Force,
+        BrakeForce  = cfg.CarBrake.Force,
+    }
+    pcall(function()
+        local hs = game:GetService("HttpService")
+        writefile(CONFIG_FILE, hs:JSONEncode(data))
+    end)
     notify("Config saved!", "", 3)
 end
 
 local function loadConfig()
-    local function getBool(key, default)
-        local ok, v = pcall(function() return UI.GetValue(key) end)
-        if not ok or v == nil then return default end
-        if v == "1" or v == 1 or v == true  then return true  end
-        if v == "0" or v == 0 or v == false then return false end
-        return default
-    end
-    local function getNum(key, default)
-        local ok, v = pcall(function() return UI.GetValue(key) end)
-        return (ok and tonumber(v)) or default
-    end
+    pcall(function()
+        if not isfile(CONFIG_FILE) then return end
+        local raw = readfile(CONFIG_FILE)
+        if not raw or raw == "" then return end
+        local hs   = game:GetService("HttpService")
+        local data = hs:JSONDecode(raw)
+        if type(data) ~= "table" then return end
 
-    cfg.TornadoESP.Visible      = getBool("cfg_TornadoESP", false)
-    cfg.ProbeESP.Visible        = getBool("cfg_ProbeESP",   false)
-    cfg.CarBoost.Enabled        = getBool("cfg_CarBoost",   false)
-    cfg.CarFreeze.Enabled       = getBool("cfg_CarFreeze",  false)
-    cfg.CharacterFreeze.Enabled = getBool("cfg_CharFreeze", false)
+        local function getBool(key, default)
+            local v = data[key]
+            return type(v) == "boolean" and v or default
+        end
+        local function getNum(key, default)
+            return tonumber(data[key]) or default
+        end
+        local function getColor(key, default)
+            local arr = data[key]
+            if type(arr) == "table" then
+                return Color3.new(
+                    math.clamp(tonumber(arr[1]) or default.R, 0, 1),
+                    math.clamp(tonumber(arr[2]) or default.G, 0, 1),
+                    math.clamp(tonumber(arr[3]) or default.B, 0, 1)
+                )
+            end
+            return default
+        end
 
-    local t = cfg.Tornado
-    t.ShowBox    = getBool("cfg_T_Box",    true)
-    t.ShowLine   = getBool("cfg_T_Line",   true)
-    t.ShowCircle = getBool("cfg_T_Circle", true)
-    t.BoxColor    = loadColor("cfg_TBoxC_",    Color3.new(1, 0, 0))
-    t.LineColor   = loadColor("cfg_TLineC_",   Color3.new(1, 1, 0))
-    t.CircleColor = loadColor("cfg_TCircleC_", Color3.new(0, 1, 1))
-    t.TextColor   = loadColor("cfg_TTextC_",   Color3.new(1, 0, 0))
+        cfg.TornadoESP.Visible      = getBool("TornadoESP", false)
+        cfg.ProbeESP.Visible        = getBool("ProbeESP",   false)
+        cfg.CarBoost.Enabled        = getBool("CarBoost",   false)
+        cfg.CarBrake.Enabled        = getBool("CarBrake",   false)
+        cfg.CarFreeze.Enabled       = getBool("CarFreeze",  false)
+        cfg.CharacterFreeze.Enabled = getBool("CharFreeze", false)
 
-    local p = cfg.Probe
-    p.BoxColor  = loadColor("cfg_PBoxC_",  Color3.new(0, 1, 1))
-    p.TextColor = loadColor("cfg_PTextC_", Color3.new(0, 1, 1))
+        local t = cfg.Tornado
+        t.ShowBox    = getBool("T_Box",    true)
+        t.ShowLine   = getBool("T_Line",   true)
+        t.ShowCircle = getBool("T_Circle", true)
+        t.BoxColor    = getColor("TBoxC",    Color3.new(1, 0, 0))
+        t.LineColor   = getColor("TLineC",   Color3.new(1, 1, 0))
+        t.CircleColor = getColor("TCircleC", Color3.new(0, 1, 1))
+        t.TextColor   = getColor("TTextC",   Color3.new(1, 0, 0))
 
-    cfg.Tween.Speed    = getNum("cfg_TweenSpeed",  120)
-    cfg.Tween.Height   = getNum("cfg_TweenHeight", 0.5)
-    cfg.Tween.Offset   = getNum("cfg_TweenOffset", 30)
-    cfg.CarBoost.Force = getNum("cfg_BoostForce",  50000)
+        local p = cfg.Probe
+        p.BoxColor  = getColor("PBoxC",  Color3.new(0, 1, 1))
+        p.TextColor = getColor("PTextC", Color3.new(0, 1, 1))
+
+        cfg.Tween.Speed    = getNum("TweenSpeed",  120)
+        cfg.Tween.Height   = getNum("TweenHeight", 0.5)
+        cfg.Tween.Offset   = getNum("TweenOffset", 30)
+        cfg.CarBoost.Force = getNum("BoostForce",  50000)
+        cfg.CarBrake.Force = getNum("BrakeForce",  5000)
+    end)
 end
 
 local function BuildESP(Tab)
@@ -1008,9 +1050,28 @@ local function BuildBoost(Tab)
     boostWidget = S:Keybind("boost_kb", 0x05, "hold")
     boostWidget:AddToHotkey("Car Boost", "boost_on")
     S:Spacing()
-    S:Text("5k=gentle  50k=normal  150k=rocket")
-    S:SliderInt("boost_force", "Force Amount", 5000, 200000, cfg.CarBoost.Force, function(v)
+    S:Text("5k=gentle  150k=normal  500k=rocket")
+    S:SliderInt("boost_force", "Force Amount", 5000, 500000, cfg.CarBoost.Force, function(v)
         cfg.CarBoost.Force = v
+    end)
+    S:Spacing()
+    S:Tip("Works with trucks and large chassis. Must be seated.")
+end
+
+local function BuildBrake(Tab)
+    local S = Tab:Section("Super Brake", "Left")
+    S:Text("Hold keybind to brake")
+    S:Spacing()
+    S:Toggle("brake_on", "Super Brake", false, function(state)
+        cfg.CarBrake.Enabled = state
+        notify(state and "Brake ON" or "Brake OFF", "", 2)
+    end)
+    brakeWidget = S:Keybind("brake_kb", 0x58, "hold")
+    brakeWidget:AddToHotkey("Super Brake", "brake_on")
+    S:Spacing()
+    S:Text("100=gentle  5k=normal  100k=instant")
+    S:SliderInt("brake_force", "Brake Force", 100, 100000, cfg.CarBrake.Force, function(v)
+        cfg.CarBrake.Force = v
     end)
     S:Spacing()
     S:Tip("Must be seated in the car.")
@@ -1161,6 +1222,7 @@ UI.AddTab("Storm Tracker", function(tab)
     BuildTornadoCustom(tab)
     BuildProbeCustom(tab)
     BuildBoost(tab)
+    BuildBrake(tab)
     BuildTween(tab)
     BuildTweenProbe(tab)
     BuildFreeze(tab)
@@ -1170,6 +1232,7 @@ end)
 cfg.CarFreeze.Enabled       = false
 cfg.CharacterFreeze.Enabled = false
 cfg.CarBoost.Enabled        = false
+cfg.CarBrake.Enabled        = false
 
 printl("[Storm Tracker] Loaded")
 task.wait(2)
@@ -1179,8 +1242,7 @@ RunService.RenderStepped:Connect(function()
 
     if cfg.CarFreeze.Enabled then
         if freeze.active then
-            local ch = freeze.chassis
-            if ch and ch.Parent and freeze.prim and freeze.lockedPos then
+            if freeze.chassis and freeze.chassis.Parent and freeze.prim and freeze.lockedPos then
                 writePos(freeze.prim, freeze.lockedPos)
                 zeroVel(freeze.prim)
             else
@@ -1201,6 +1263,10 @@ RunService.RenderStepped:Connect(function()
     if cfg.CarBoost.Enabled and boostWidget and boostWidget:IsEnabled() then
         pcall(applyCarBoost)
     end
+
+    if cfg.CarBrake.Enabled and brakeWidget and brakeWidget:IsEnabled() then
+        pcall(applyCarBrake)
+    end
 end)
 
 RunService.Heartbeat:Connect(function()
@@ -1218,17 +1284,11 @@ RunService.Heartbeat:Connect(function()
 end)
 
 task.spawn(function()
-    local scanFrame = 0
     while true do
-        pcall(function()
-            if isrbxactive() then
-                scanFrame = scanFrame + 1
-                if scanFrame % 30 == 0 then
-                    scanTornadoes()
-                    scanProbes()
-                end
-            end
-        end)
-        task.wait(1 / 60)
+        task.wait(0.5)
+        if isrbxactive() then
+            pcall(scanTornadoes)
+            pcall(scanProbes)
+        end
     end
 end)
