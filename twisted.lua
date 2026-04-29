@@ -5,8 +5,8 @@ local LocalPlayer = Players.LocalPlayer
 local findProbePart, scanProbes, updateProbeEsp
 
 -- Auto-fetch latest offsets from imtheo.lol
-local OFF_LP     = 0x130  -- Player.LocalPlayer fallback (304)
-local OFF_USERID = 0x2C8  -- Player.UserId fallback (712)
+local OFF_LP     = 0x130
+local OFF_USERID = 0x2C8
 pcall(function()
     local req = request or (syn and syn.request) or (http and http.request)
     if not req then return end
@@ -1232,7 +1232,7 @@ local function BuildDebug(Tab)
 end
 
 loadConfig()
-syncTornadoColors()0
+syncTornadoColors()
 syncProbeColors()
 
 UI.AddTab("Storm Tracker", function(tab)
