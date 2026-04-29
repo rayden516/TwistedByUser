@@ -4,28 +4,11 @@ local LocalPlayer = Players.LocalPlayer
 
 local findProbePart, scanProbes, updateProbeEsp
 
--- Auto-fetch latest offsets from imtheo.lol
-local OFF_LP     = 0x130
-local OFF_USERID = 0x2C8
-pcall(function()
-    local req = request or (syn and syn.request) or (http and http.request)
-    if not req then return end
-    local r = req({ Url = "https://imtheo.lol/Offsets/Offsets.json", Method = "GET" })
-    if not (r and r.StatusCode == 200 and r.Body) then return end
-    local hs   = game:GetService("HttpService")
-    local data = hs:JSONDecode(r.Body)
-    if type(data) ~= "table" or type(data.Player) ~= "table" then return end
-    local lp  = tonumber(data.Player.LocalPlayer)
-    local uid = tonumber(data.Player.UserId)
-    if lp  and lp  > 0 then OFF_LP     = lp  end
-    if uid and uid > 0 then OFF_USERID = uid end
-    print("[Storm Tracker] Offsets fetched: LP=" .. OFF_LP .. " UserId=" .. OFF_USERID)
-end)
 
 local myUserId = "0"
 pcall(function()
     local base = getbase()
-    local dm = memory_read("uintptr_t", memory_read("uintptr_t", base + 0x7B991D8) + 0x1D0)
+    local dm = memory_read("uintptr_t", memory_read("uintptr_t", base + 0x7C1A148) + 0x1D0)
     local function getChild(parent, name)
         local ptr = memory_read("uintptr_t", parent + 0x78)
         if ptr == 0 then return nil end
@@ -35,8 +18,8 @@ pcall(function()
             if memory_read("string", memory_read("uintptr_t", c + 0xB0)) == name then return c end
         end
     end
-    local lp     = memory_read("uintptr_t", getChild(dm, "Players") + OFF_LP)
-    local userId = memory_read("uintptr_t", lp + OFF_USERID)
+    local lp     = memory_read("uintptr_t", getChild(dm, "Players") + 0x130)
+    local userId = memory_read("uintptr_t", lp + 0x2C8)
     myUserId = tostring(userId)
 end)
 print("[Storm Tracker] UserId:", myUserId)
