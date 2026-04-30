@@ -828,8 +828,12 @@ local function safeZeroVelocity(part)
     if prim then zeroVel(prim) end
 end
 
-local boostWidget  = nil
-local brakeWidget  = nil
+local boostWidget      = nil
+local brakeWidget      = nil
+local carFreezeWidget  = nil
+local charFreezeWidget = nil
+local _cfPrev          = false
+local _chPrev          = false
 
 local function applyCarBoost()
     local prim = findCurrentPrim()
@@ -1146,16 +1150,13 @@ local function BuildFreeze(Tab)
     local S = Tab:Section("Anti-Sling / Freeze", "Right")
     S:Text("Prevents being flung by the tornado")
     S:Spacing()
-    S:Toggle("CarFreeze", "Car Freeze", false, function(state)
-        cfg.CarFreeze.Enabled = state
-        if state then applyCarFreeze() else releaseCarFreeze() end
-        notify(state and "Car Freeze ON" or "Car Freeze OFF", "", 3)
-    end)
+    S:Toggle("CarFreeze", "Car Freeze", false)
+    carFreezeWidget = S:Keybind("carfreeze_kb", 0x46, "toggle")
+    carFreezeWidget:AddToHotkey("Anti-Sling / Freeze", "CarFreeze")
     S:Spacing()
-    S:Toggle("CharFreeze", "Character Freeze", false, function(state)
-        cfg.CharacterFreeze.Enabled = state
-        notify(state and "Character Freeze ON" or "Character Freeze OFF", "", 3)
-    end)
+    S:Toggle("CharFreeze", "Character Freeze", false)
+    charFreezeWidget = S:Keybind("charfreeze_kb", 0x47, "toggle")
+    charFreezeWidget:AddToHotkey("Anti-Sling / Freeze", "CharFreeze")
     S:Spacing()
     S:Tip("Car Freeze locks chassis CFrame every frame. Tornado cannot move it.")
 end
@@ -1241,24 +1242,42 @@ task.wait(2)
 RunService.RenderStepped:Connect(function()
     if not isrbxactive() then return end
 
-    if cfg.CarFreeze.Enabled then
-        if freeze.active then
-            if freeze.chassis and freeze.chassis.Parent and freeze.prim and freeze.lockedPos then
-                writePos(freeze.prim, freeze.lockedPos)
-                zeroVel(freeze.prim)
+    if carFreezeWidget then
+        local cfActive = carFreezeWidget:IsEnabled()
+        if cfActive then
+            if freeze.active then
+                if freeze.chassis and freeze.chassis.Parent and freeze.prim and freeze.lockedPos then
+                    writePos(freeze.prim, freeze.lockedPos)
+                    zeroVel(freeze.prim)
+                else
+                    freeze.active = false
+                    applyCarFreeze()
+                end
             else
-                freeze.active = false
                 applyCarFreeze()
             end
-        else
-            applyCarFreeze()
+        elseif freeze.active then
+            releaseCarFreeze()
+        end
+        if cfActive ~= _cfPrev then
+            _cfPrev = cfActive
+            UI.SetValue("CarFreeze", cfActive)
+            notify(cfActive and "Car Freeze ON" or "Car Freeze OFF", "", 3)
         end
     end
 
-    if cfg.CharacterFreeze.Enabled then
-        local char = LocalPlayer.Character
-        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-        if hrp then safeZeroVelocity(hrp) end
+    if charFreezeWidget then
+        local chActive = charFreezeWidget:IsEnabled()
+        if chActive then
+            local char = LocalPlayer.Character
+            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then safeZeroVelocity(hrp) end
+        end
+        if chActive ~= _chPrev then
+            _chPrev = chActive
+            UI.SetValue("CharFreeze", chActive)
+            notify(chActive and "Character Freeze ON" or "Character Freeze OFF", "", 3)
+        end
     end
 
     if cfg.CarBoost.Enabled and boostWidget and boostWidget:IsEnabled() then
