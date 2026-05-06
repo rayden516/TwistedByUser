@@ -8,7 +8,7 @@ local findProbePart, scanProbes, updateProbeEsp
 local myUserId = "0"
 pcall(function()
     local base = getbase()
-    local dm = memory_read("uintptr_t", memory_read("uintptr_t", base + 0x7C1A148) + 0x1D0)
+    local dm = memory_read("uintptr_t", memory_read("uintptr_t", base + 0x749CBD8) + 0x1D0)
     local function getChild(parent, name)
         local ptr = memory_read("uintptr_t", parent + 0x78)
         if ptr == 0 then return nil end
@@ -18,7 +18,7 @@ pcall(function()
             if memory_read("string", memory_read("uintptr_t", c + 0xB0)) == name then return c end
         end
     end
-    local lp     = memory_read("uintptr_t", getChild(dm, "Players") + 0x130)
+    local lp     = memory_read("uintptr_t", getChild(dm, "Players") + 0x138)
     local userId = memory_read("uintptr_t", lp + 0x2C8)
     myUserId = tostring(userId)
 end)
