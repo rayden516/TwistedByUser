@@ -27,10 +27,10 @@ print("[Storm Tracker] UserId:", myUserId)
 local cfg = {
     TornadoESP      = { Visible = false },
     ProbeESP        = { Visible = false },
-    CarFreeze       = { Enabled = false },
-    CharacterFreeze = { Enabled = false },
-    CarBoost        = { Enabled = false, Force = 50000 },
-    CarBrake        = { Enabled = false, Force = 5000 },
+    CarFreeze       = { Enabled = false, KeyVK = 0x4B },
+    CharacterFreeze = { Enabled = false, KeyVK = 0x4C },
+    CarBoost        = { Enabled = false, Force = 50000, KeyVK = 0x05 },
+    CarBrake        = { Enabled = false, Force = 5000,  KeyVK = 0x58 },
     Tornado = {
         ShowBox    = true,
         ShowLine   = true,
@@ -790,7 +790,8 @@ local function findCurrentPrim()
     return carCache.prim
 end
 
-local freeze = { chassis = nil, lockedPos = nil, lockedRot = nil, prim = nil, active = false }
+local freeze     = { chassis = nil, lockedPos = nil, lockedRot = nil, prim = nil, active = false }
+local charFreeze = { hrp = nil, lockedPos = nil, prim = nil, active = false }
 
 local function applyCarFreeze()
     if freeze.active then return end
@@ -822,11 +823,28 @@ local function releaseCarFreeze()
     freeze.active    = false
 end
 
-local function safeZeroVelocity(part)
-    if not part or not part:IsA("BasePart") then return end
-    local prim = readPrim(part)
-    if prim then zeroVel(prim) end
+local function applyCharFreeze()
+    if charFreeze.active then return end
+    local char = LocalPlayer.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local prim = readPrim(hrp)
+    if not prim then return end
+    local pos = readPos(prim)
+    if not pos then return end
+    charFreeze.hrp       = hrp
+    charFreeze.lockedPos = pos
+    charFreeze.prim      = prim
+    charFreeze.active    = true
 end
+
+local function releaseCharFreeze()
+    charFreeze.hrp       = nil
+    charFreeze.lockedPos = nil
+    charFreeze.prim      = nil
+    charFreeze.active    = false
+end
+
 
 local boostWidget      = nil
 local brakeWidget      = nil
@@ -902,6 +920,10 @@ local function saveConfig()
         TweenOffset = cfg.Tween.Offset,
         BoostForce  = cfg.CarBoost.Force,
         BrakeForce  = cfg.CarBrake.Force,
+        BoostKB     = UI.GetValue("boost_kb"),
+        BrakeKB     = UI.GetValue("brake_kb"),
+        CarFrzKB    = UI.GetValue("carfreeze_kb"),
+        CharFrzKB   = UI.GetValue("charfreeze_kb"),
     }
     pcall(function()
         local hs = game:GetService("HttpService")
@@ -961,8 +983,12 @@ local function loadConfig()
         cfg.Tween.Speed    = getNum("TweenSpeed",  120)
         cfg.Tween.Height   = getNum("TweenHeight", 0.5)
         cfg.Tween.Offset   = getNum("TweenOffset", 30)
-        cfg.CarBoost.Force = getNum("BoostForce",  50000)
-        cfg.CarBrake.Force = getNum("BrakeForce",  5000)
+        cfg.CarBoost.Force        = getNum("BoostForce",  50000)
+        cfg.CarBrake.Force        = getNum("BrakeForce",  5000)
+        cfg.CarBoost.KeyVK        = getNum("BoostKB",     0x05)
+        cfg.CarBrake.KeyVK        = getNum("BrakeKB",     0x58)
+        cfg.CarFreeze.KeyVK       = getNum("CarFrzKB",    0x4B)
+        cfg.CharacterFreeze.KeyVK = getNum("CharFrzKB",   0x4C)
     end)
 end
 
@@ -1048,11 +1074,11 @@ local function BuildBoost(Tab)
     local S = Tab:Section("Car Boost", "Left")
     S:Text("Hold keybind to boost forward")
     S:Spacing()
-    S:Toggle("boost_on", "Car Boost", false, function(state)
+    S:Toggle("boost_on", "Car Boost", cfg.CarBoost.Enabled, function(state)
         cfg.CarBoost.Enabled = state
         notify(state and "Car Boost ON" or "Car Boost OFF", "", 2)
     end)
-    boostWidget = S:Keybind("boost_kb", 0x05, "hold")
+    boostWidget = S:Keybind("boost_kb", cfg.CarBoost.KeyVK, "hold")
     boostWidget:AddToHotkey("Car Boost", "boost_on")
     S:Spacing()
     S:Text("5k=gentle  150k=normal  500k=rocket")
@@ -1067,11 +1093,11 @@ local function BuildBrake(Tab)
     local S = Tab:Section("Super Brake", "Left")
     S:Text("Hold keybind to brake")
     S:Spacing()
-    S:Toggle("brake_on", "Super Brake", false, function(state)
+    S:Toggle("brake_on", "Super Brake", cfg.CarBrake.Enabled, function(state)
         cfg.CarBrake.Enabled = state
         notify(state and "Brake ON" or "Brake OFF", "", 2)
     end)
-    brakeWidget = S:Keybind("brake_kb", 0x58, "hold")
+    brakeWidget = S:Keybind("brake_kb", cfg.CarBrake.KeyVK, "hold")
     brakeWidget:AddToHotkey("Super Brake", "brake_on")
     S:Spacing()
     S:Text("100=gentle  5k=normal  100k=instant")
@@ -1150,16 +1176,21 @@ local function BuildFreeze(Tab)
     local S = Tab:Section("Anti-Sling / Freeze", "Right")
     S:Text("Prevents being flung by the tornado")
     S:Spacing()
-    S:Toggle("CarFreeze", "Car Freeze", false)
-    carFreezeWidget = S:Keybind("carfreeze_kb", 0x46, "toggle")
-    carFreezeWidget:AddToHotkey("Anti-Sling / Freeze", "CarFreeze")
+    S:Toggle("CarFreeze", "Car Freeze", cfg.CarFreeze.Enabled, function(state)
+        cfg.CarFreeze.Enabled = state
+        notify(state and "Car Freeze enabled" or "Car Freeze disabled", "", 2)
+    end)
+    carFreezeWidget = S:Keybind("carfreeze_kb", cfg.CarFreeze.KeyVK, "toggle")
     S:Spacing()
-    S:Toggle("CharFreeze", "Character Freeze", false)
-    charFreezeWidget = S:Keybind("charfreeze_kb", 0x47, "toggle")
-    charFreezeWidget:AddToHotkey("Anti-Sling / Freeze", "CharFreeze")
+    S:Toggle("CharFreeze", "Character Freeze", cfg.CharacterFreeze.Enabled, function(state)
+        cfg.CharacterFreeze.Enabled = state
+        notify(state and "Character Freeze enabled" or "Character Freeze disabled", "", 2)
+    end)
+    charFreezeWidget = S:Keybind("charfreeze_kb", cfg.CharacterFreeze.KeyVK, "toggle")
     S:Spacing()
     S:Tip("Car Freeze locks chassis CFrame every frame. Tornado cannot move it.")
 end
+
 
 local function BuildDebug(Tab)
     local S = Tab:Section("Debug", "Left")
@@ -1231,11 +1262,6 @@ UI.AddTab("Storm Tracker", function(tab)
     BuildDebug(tab)
 end)
 
-cfg.CarFreeze.Enabled       = false
-cfg.CharacterFreeze.Enabled = false
-cfg.CarBoost.Enabled        = false
-cfg.CarBrake.Enabled        = false
-
 printl("[Storm Tracker] Loaded")
 task.wait(2)
 
@@ -1243,7 +1269,7 @@ RunService.RenderStepped:Connect(function()
     if not isrbxactive() then return end
 
     if carFreezeWidget then
-        local cfActive = carFreezeWidget:IsEnabled()
+        local cfActive = cfg.CarFreeze.Enabled and carFreezeWidget:IsEnabled()
         if cfActive then
             if freeze.active then
                 if freeze.chassis and freeze.chassis.Parent and freeze.prim and freeze.lockedPos then
@@ -1261,21 +1287,29 @@ RunService.RenderStepped:Connect(function()
         end
         if cfActive ~= _cfPrev then
             _cfPrev = cfActive
-            UI.SetValue("CarFreeze", cfActive)
             notify(cfActive and "Car Freeze ON" or "Car Freeze OFF", "", 3)
         end
     end
 
     if charFreezeWidget then
-        local chActive = charFreezeWidget:IsEnabled()
+        local chActive = cfg.CharacterFreeze.Enabled and charFreezeWidget:IsEnabled()
         if chActive then
-            local char = LocalPlayer.Character
-            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-            if hrp then safeZeroVelocity(hrp) end
+            if charFreeze.active then
+                if charFreeze.hrp and charFreeze.hrp.Parent and charFreeze.prim and charFreeze.lockedPos then
+                    writePos(charFreeze.prim, charFreeze.lockedPos)
+                    zeroVel(charFreeze.prim)
+                else
+                    charFreeze.active = false
+                    applyCharFreeze()
+                end
+            else
+                applyCharFreeze()
+            end
+        elseif charFreeze.active then
+            releaseCharFreeze()
         end
         if chActive ~= _chPrev then
             _chPrev = chActive
-            UI.SetValue("CharFreeze", chActive)
             notify(chActive and "Character Freeze ON" or "Character Freeze OFF", "", 3)
         end
     end
