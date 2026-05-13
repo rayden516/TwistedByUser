@@ -8,7 +8,7 @@ local findProbePart, scanProbes, updateProbeEsp
 local myUserId = "0"
 pcall(function()
     local base = getbase()
-    local dm = memory_read("uintptr_t", memory_read("uintptr_t", base + 0x749CBD8) + 0x1D0)
+    local dm = memory_read("uintptr_t", memory_read("uintptr_t", base + 0x74F8758) + 0x1D0)
     local function getChild(parent, name)
         local ptr = memory_read("uintptr_t", parent + 0x78)
         if ptr == 0 then return nil end
@@ -19,7 +19,7 @@ pcall(function()
         end
     end
     local lp     = memory_read("uintptr_t", getChild(dm, "Players") + 0x138)
-    local userId = memory_read("uintptr_t", lp + 0x2C8)
+    local userId = memory_read("uintptr_t", lp + 0x2D8)
     myUserId = tostring(userId)
 end)
 print("[Storm Tracker] UserId:", myUserId)
@@ -594,7 +594,7 @@ local function cancel_velocity_part(part)
 end
 
 local WORLD_OFF   = 0x408
-local GRAVITY_OFF = 0x1D8
+local GRAVITY_OFF = 0x9E0
 
 local function setGravity(g)
     pcall(function()
