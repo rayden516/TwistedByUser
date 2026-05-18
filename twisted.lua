@@ -8,7 +8,7 @@ local findProbePart, scanProbes, updateProbeEsp
 local myUserId = "0"
 pcall(function()
     local base = getbase()
-    local dm = memory_read("uintptr_t", memory_read("uintptr_t", base + 0x74F8758) + 0x1D0)
+    local dm = memory_read("uintptr_t", memory_read("uintptr_t", base + 0x74F6758) + 0x1D0)
     local function getChild(parent, name)
         local ptr = memory_read("uintptr_t", parent + 0x78)
         if ptr == 0 then return nil end
@@ -29,8 +29,9 @@ local cfg = {
     ProbeESP        = { Visible = false },
     CarFreeze       = { Enabled = false, KeyVK = 0x4B },
     CharacterFreeze = { Enabled = false, KeyVK = 0x4C },
-    CarBoost        = { Enabled = false, Force = 50000, KeyVK = 0x05 },
+    CarBoost        = { Enabled = false, Force = 50000, KeyVK = 0x05, LatDamp = 0.5 },
     CarBrake        = { Enabled = false, Force = 5000,  KeyVK = 0x58 },
+    CharBoost       = { Enabled = false, Force = 30000, KeyVK = 0x47 },
     Tornado = {
         ShowBox    = true,
         ShowLine   = true,
@@ -48,7 +49,10 @@ local cfg = {
         Speed  = 120,
         Height = 0.5,
         Offset = 30,
+        KeyVK  = 0x54,
     },
+    MaxESPDist = 5000,
+    SpeedHUD   = { Visible = false },
 }
 
 local espPool    = {}
@@ -380,6 +384,7 @@ local function updateTornadoEsp(playerPos)
 
             local wind = readWindAttr(data.stormModel) or getSpeed(key)
             local dist = (playerPos - pos).Magnitude
+            if dist > cfg.MaxESPDist then hideEntry(espPool[key]); continue end
             entry.label.Text     = string.format("TORNADO [%dm] | %.1f mph", math.floor(dist), wind)
             entry.label.Position = Vector2.new(scr.X, scr.Y - 46)
             entry.label.Color    = tc.TextColor
@@ -452,6 +457,7 @@ function updateProbeEsp(playerPos)
         if entry.label then entry.label.Color = pc.TextColor end
 
         local dist    = (playerPos - pos).Magnitude
+        if dist > cfg.MaxESPDist then hideEntry(espPool[key]); continue end
         local scale   = math.clamp(1000 / dist, 0.3, 2)
         local boxSize = math.floor(50 * scale)
 
@@ -494,9 +500,9 @@ local function syncProbeColors()
 end
 
 local OFF_PRIMITIVE = 0x148
-local OFF_CF        = 0xC0
+local OFF_CF        = 0xC8
 local OFF_POS       = 0x24
-local OFF_VEL       = 0xF0
+local OFF_VEL       = 0xF8
 
 local function readPrim(part)
     local ok, ptr = pcall(memory_read, "uintptr_t", part.Address + OFF_PRIMITIVE)
@@ -553,8 +559,8 @@ local function readVel(prim)
     return Vector3.new(x, y, z)
 end
 
-local OFF_CF_ROT = 0xC0
-local OFF_CF_POS = 0xE4
+local OFF_CF_ROT = 0xC8
+local OFF_CF_POS = 0xEC
 
 local function read_cframe(part)
     local ok, prim = pcall(memory_read, "uintptr_t", part.Address + 0x148)
@@ -588,13 +594,13 @@ end
 local function cancel_velocity_part(part)
     local ok, prim = pcall(memory_read, "uintptr_t", part.Address + 0x148)
     if not ok or not prim or prim == 0 then return end
-    pcall(memory_write, "float", prim + 0xF0,       0)
-    pcall(memory_write, "float", prim + 0xF0 + 0x4, 0)
-    pcall(memory_write, "float", prim + 0xF0 + 0x8, 0)
+    pcall(memory_write, "float", prim + 0xF8,       0)
+    pcall(memory_write, "float", prim + 0xF8 + 0x4, 0)
+    pcall(memory_write, "float", prim + 0xF8 + 0x8, 0)
 end
 
 local WORLD_OFF   = 0x408
-local GRAVITY_OFF = 0x9E0
+local GRAVITY_OFF = 0x210
 
 local function setGravity(g)
     pcall(function()
@@ -850,31 +856,50 @@ local boostWidget      = nil
 local brakeWidget      = nil
 local carFreezeWidget  = nil
 local charFreezeWidget = nil
+local charBoostWidget  = nil
+local tweenWidget      = nil
 local _cfPrev          = false
 local _chPrev          = false
+local _tweenPrev       = false
+
+local speedHudLabel        = Drawing.new("Text")
+speedHudLabel.Center       = true
+speedHudLabel.Outline      = true
+speedHudLabel.Font         = 2
+speedHudLabel.Size         = 16
+speedHudLabel.Transparency = 1
+speedHudLabel.Color        = Color3.new(1, 1, 1)
+speedHudLabel.Visible      = false
 
 local function applyCarBoost()
     local prim = findCurrentPrim()
     if not prim then return end
     local ch = carCache.chassis
     if not ch then return end
-    local ok, lv = pcall(function() return ch.CFrame.LookVector end)
-    if not ok or not lv then return end
+    local ok, cf = pcall(function() return ch.CFrame end)
+    if not ok or not cf then return end
 
+    local lv     = cf.LookVector
+    local rv     = cf.RightVector
     local curVel = readVel(prim)
-    local vy     = curVel and curVel.Y or 0
-    local target = cfg.CarBoost.Force * 0.016
-    local vx     = lv.X * target
-    local vz     = lv.Z * target
-    if curVel then
-        vx = curVel.X + (vx - curVel.X) * 0.25
-        vz = curVel.Z + (vz - curVel.Z) * 0.25
+    if not curVel then return end
+
+    local maxSpeed = cfg.CarBoost.Force * 0.016
+    local fwdSpeed = curVel.X * lv.X + curVel.Z * lv.Z
+    local accel    = math.max(0, maxSpeed - fwdSpeed) * 0.3
+    local latSpeed = curVel.X * rv.X + curVel.Z * rv.Z
+    local vx = curVel.X + lv.X * accel - rv.X * latSpeed * cfg.CarBoost.LatDamp
+    local vz = curVel.Z + lv.Z * accel - rv.Z * latSpeed * cfg.CarBoost.LatDamp
+    local hMag = math.sqrt(vx * vx + vz * vz)
+    if hMag > maxSpeed then
+        vx = vx * maxSpeed / hMag
+        vz = vz * maxSpeed / hMag
     end
-    writeVel(prim, Vector3.new(vx, vy, vz))
+    writeVel(prim, Vector3.new(vx, curVel.Y, vz))
     pcall(function()
-        memory_write("float", prim + 0xFC,       0)
-        memory_write("float", prim + 0xFC + 0x4, 0)
-        memory_write("float", prim + 0xFC + 0x8, 0)
+        memory_write("float", prim + 0x104,       0)
+        memory_write("float", prim + 0x104 + 0x4, 0)
+        memory_write("float", prim + 0x104 + 0x8, 0)
     end)
 end
 
@@ -883,18 +908,57 @@ local function applyCarBrake()
     if not prim then return end
     local vel = readVel(prim)
     if not vel then return end
+
     local hSpeed = math.sqrt(vel.X * vel.X + vel.Z * vel.Z)
-    if hSpeed < 0.5 then
-        writeVel(prim, Vector3.new(0, vel.Y, 0))
-        return
-    end
-    local decel    = cfg.CarBrake.Force * 0.016
-    local newSpeed = math.max(0, hSpeed - decel)
-    local ratio    = newSpeed / hSpeed
+    local decay = math.clamp(cfg.CarBrake.Force * 0.016 / math.max(hSpeed, 1), 0, 1)
+    local ratio = math.max(0, 1 - decay)
+    if hSpeed * ratio < 0.5 then ratio = 0 end
+
     writeVel(prim, Vector3.new(vel.X * ratio, vel.Y, vel.Z * ratio))
+    pcall(function()
+        memory_write("float", prim + 0x104,       0)
+        memory_write("float", prim + 0x104 + 0x4, 0)
+        memory_write("float", prim + 0x104 + 0x8, 0)
+    end)
+end
+
+local function applyCharBoost()
+    local char = LocalPlayer.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local prim = readPrim(hrp)
+    if not prim then return end
+    local ok, cf = pcall(function() return hrp.CFrame end)
+    if not ok or not cf then return end
+
+    local lv     = cf.LookVector
+    local rv     = cf.RightVector
+    local curVel = readVel(prim)
+    if not curVel then return end
+
+    local maxSpeed = cfg.CharBoost.Force * 0.016
+    local fwdSpeed = curVel.X * lv.X + curVel.Z * lv.Z
+    local accel    = math.max(0, maxSpeed - fwdSpeed) * 0.3
+    local latSpeed = curVel.X * rv.X + curVel.Z * rv.Z
+    local vx = curVel.X + lv.X * accel - rv.X * latSpeed * 0.4
+    local vz = curVel.Z + lv.Z * accel - rv.Z * latSpeed * 0.4
+    local hMag = math.sqrt(vx * vx + vz * vz)
+    if hMag > maxSpeed then
+        vx = vx * maxSpeed / hMag
+        vz = vz * maxSpeed / hMag
+    end
+    writeVel(prim, Vector3.new(vx, curVel.Y, vz))
 end
 
 local CONFIG_FILE = "storm_tracker_cfg.json"
+
+local function saveKeyVK(widget, default)
+    if widget then
+        local k = widget:GetKey()
+        if type(k) == "number" then return k end
+    end
+    return default
+end
 
 local function saveConfig()
     local t    = cfg.Tornado
@@ -920,10 +984,17 @@ local function saveConfig()
         TweenOffset = cfg.Tween.Offset,
         BoostForce  = cfg.CarBoost.Force,
         BrakeForce  = cfg.CarBrake.Force,
-        BoostKB     = UI.GetValue("boost_kb"),
-        BrakeKB     = UI.GetValue("brake_kb"),
-        CarFrzKB    = UI.GetValue("carfreeze_kb"),
-        CharFrzKB   = UI.GetValue("charfreeze_kb"),
+        BoostKB       = saveKeyVK(boostWidget,      cfg.CarBoost.KeyVK),
+        BrakeKB       = saveKeyVK(brakeWidget,      cfg.CarBrake.KeyVK),
+        CarFrzKB      = saveKeyVK(carFreezeWidget,  cfg.CarFreeze.KeyVK),
+        CharFrzKB     = saveKeyVK(charFreezeWidget, cfg.CharacterFreeze.KeyVK),
+        CharBoost     = cfg.CharBoost.Enabled,
+        CharBoostForce= cfg.CharBoost.Force,
+        CharBoostKB   = saveKeyVK(charBoostWidget,  cfg.CharBoost.KeyVK),
+        TweenKB       = saveKeyVK(tweenWidget,      cfg.Tween.KeyVK),
+        LatDamp       = cfg.CarBoost.LatDamp,
+        MaxESPDist    = cfg.MaxESPDist,
+        SpeedHUD      = cfg.SpeedHUD.Visible,
     }
     pcall(function()
         local hs = game:GetService("HttpService")
@@ -985,10 +1056,17 @@ local function loadConfig()
         cfg.Tween.Offset   = getNum("TweenOffset", 30)
         cfg.CarBoost.Force        = getNum("BoostForce",  50000)
         cfg.CarBrake.Force        = getNum("BrakeForce",  5000)
-        cfg.CarBoost.KeyVK        = getNum("BoostKB",     0x05)
-        cfg.CarBrake.KeyVK        = getNum("BrakeKB",     0x58)
-        cfg.CarFreeze.KeyVK       = getNum("CarFrzKB",    0x4B)
-        cfg.CharacterFreeze.KeyVK = getNum("CharFrzKB",   0x4C)
+        cfg.CarBoost.KeyVK        = getNum("BoostKB",       0x05)
+        cfg.CarBrake.KeyVK        = getNum("BrakeKB",       0x58)
+        cfg.CarFreeze.KeyVK       = getNum("CarFrzKB",      0x4B)
+        cfg.CharacterFreeze.KeyVK = getNum("CharFrzKB",     0x4C)
+        cfg.CharBoost.Enabled     = getBool("CharBoost",    false)
+        cfg.CharBoost.Force       = getNum("CharBoostForce",30000)
+        cfg.CharBoost.KeyVK       = getNum("CharBoostKB",   0x47)
+        cfg.Tween.KeyVK           = getNum("TweenKB",       0x54)
+        cfg.CarBoost.LatDamp      = getNum("LatDamp",       0.5)
+        cfg.MaxESPDist            = getNum("MaxESPDist",    5000)
+        cfg.SpeedHUD.Visible      = getBool("SpeedHUD",     false)
     end)
 end
 
@@ -1013,6 +1091,16 @@ local function BuildESP(Tab)
     end)
     S:Spacing()
     S:Text("For fullbright, enable Custom Time = 12.00")
+    S:Spacing()
+    S:Toggle("SpeedHUD", "Speed HUD", cfg.SpeedHUD.Visible, function(state)
+        cfg.SpeedHUD.Visible  = state
+        speedHudLabel.Visible = false
+    end)
+    S:Spacing()
+    S:Text("Hide ESP beyond this distance")
+    S:SliderInt("MaxESPDist", "Max Render Distance (m)", 100, 10000, cfg.MaxESPDist, function(v)
+        cfg.MaxESPDist = v
+    end)
     S:Spacing()
     S:Button("Save Config", function() saveConfig() end)
 end
@@ -1086,6 +1174,11 @@ local function BuildBoost(Tab)
         cfg.CarBoost.Force = v
     end)
     S:Spacing()
+    S:Text("0.0=no damping  0.5=normal  1.0=locked")
+    S:SliderFloat("lat_damp", "Wind Resistance", 0.0, 1.0, cfg.CarBoost.LatDamp, "%.2f", function(v)
+        cfg.CarBoost.LatDamp = v
+    end)
+    S:Spacing()
     S:Tip("Works with trucks and large chassis. Must be seated.")
 end
 
@@ -1127,6 +1220,10 @@ local function BuildTween(Tab)
     S:SliderInt("TweenOffset", "Stop Distance (studs)", 10, 200, cfg.Tween.Offset, function(v)
         cfg.Tween.Offset = v
     end)
+    S:Spacing()
+    S:Toggle("tween_on", "Tween to Tornado", false, function() end)
+    tweenWidget = S:Keybind("tween_kb", cfg.Tween.KeyVK, "click")
+    tweenWidget:AddToHotkey("Tween to Tornado", "tween_on")
     S:Spacing()
     S:Button("Go to Nearest Tornado", function() goToNearestTornado() end)
 end
@@ -1170,6 +1267,25 @@ local function BuildTweenProbe(Tab)
                 i, entry.dist, p.X, p.Y, p.Z))
         end
     end)
+end
+
+local function BuildCharBoost(Tab)
+    local S = Tab:Section("Character Boost", "Left")
+    S:Text("Hold keybind to boost on foot")
+    S:Spacing()
+    S:Toggle("charboost_on", "Character Boost", cfg.CharBoost.Enabled, function(state)
+        cfg.CharBoost.Enabled = state
+        notify(state and "Character Boost ON" or "Character Boost OFF", "", 2)
+    end)
+    charBoostWidget = S:Keybind("charboost_kb", cfg.CharBoost.KeyVK, "hold")
+    charBoostWidget:AddToHotkey("Character Boost", "charboost_on")
+    S:Spacing()
+    S:Text("5k=gentle  30k=normal  200k=fast")
+    S:SliderInt("charboost_force", "Force Amount", 5000, 200000, cfg.CharBoost.Force, function(v)
+        cfg.CharBoost.Force = v
+    end)
+    S:Spacing()
+    S:Tip("Boosts on foot. Uses same lateral damping as Car Boost.")
 end
 
 local function BuildFreeze(Tab)
@@ -1262,6 +1378,10 @@ UI.AddTab("Storm Tracker", function(tab)
     BuildDebug(tab)
 end)
 
+UI.AddTab("Storm Tracker 2", function(tab)
+    BuildCharBoost(tab)
+end)
+
 printl("[Storm Tracker] Loaded")
 task.wait(2)
 
@@ -1321,6 +1441,17 @@ RunService.RenderStepped:Connect(function()
     if cfg.CarBrake.Enabled and brakeWidget and brakeWidget:IsEnabled() then
         pcall(applyCarBrake)
     end
+
+    if cfg.CharBoost.Enabled and charBoostWidget and charBoostWidget:IsEnabled() then
+        pcall(applyCharBoost)
+    end
+
+    if tweenWidget and tweenWidget:IsEnabled() then
+        if not _tweenPrev then pcall(goToNearestTornado) end
+        _tweenPrev = true
+    else
+        _tweenPrev = false
+    end
 end)
 
 RunService.Heartbeat:Connect(function()
@@ -1335,6 +1466,28 @@ RunService.Heartbeat:Connect(function()
 
     pcall(updateTornadoEsp, playerPos)
     pcall(updateProbeEsp, playerPos)
+
+    if cfg.SpeedHUD.Visible then
+        local prim = findCurrentPrim()
+        if prim then
+            local vel = readVel(prim)
+            if vel then
+                local spd = math.floor(math.sqrt(vel.X * vel.X + vel.Z * vel.Z))
+                local cam = workspace.CurrentCamera
+                if cam then
+                    speedHudLabel.Position = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y - 60)
+                end
+                speedHudLabel.Text    = spd .. " st/s"
+                speedHudLabel.Visible = true
+            else
+                speedHudLabel.Visible = false
+            end
+        else
+            speedHudLabel.Visible = false
+        end
+    else
+        speedHudLabel.Visible = false
+    end
 end)
 
 task.spawn(function()
