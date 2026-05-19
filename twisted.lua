@@ -326,98 +326,113 @@ function scanProbes()
     end
 end
 
+local math_floor  = math.floor
+local math_abs    = math.abs
+local math_max    = math.max
+local math_clamp  = math.clamp
+local table_clear = table.clear or function(t) for k in pairs(t) do t[k] = nil end end
+
 local function updateTornadoEsp(playerPos)
     if not cfg.TornadoESP.Visible then
         for key in pairs(activeKeys.tornado) do hideEntry(espPool[key]) end
-        activeKeys.tornado = {}
+        table_clear(activeKeys.tornado)
         return
     end
 
-    local seen = {}
-    local tc   = cfg.Tornado
+    local seen    = {}
+    local tc      = cfg.Tornado
+    local maxDist = cfg.MaxESPDist
 
     for key, data in pairs(tornadoData) do
         local part = data.part
         if not part or not part.Parent then
             hideEntry(espPool[key])
-        else
-            local ok, pos = pcall(function() return part.Position end)
-            if not ok or not pos then continue end
+            continue
+        end
 
-            sampleSpeed(key, pos)
-            local scr, onScr = toScreen(pos)
-            if not scr or not onScr then hideEntry(espPool[key]); continue end
+        local ok, pos = pcall(function() return part.Position end)
+        if not ok or not pos then continue end
 
-            seen[key]               = true
-            activeKeys.tornado[key] = true
-            local entry = getPoolEntry(key, true, true)
+        local dist = (playerPos - pos).Magnitude
+        if dist > maxDist then
+            hideEntry(espPool[key])
+            continue
+        end
 
-            if entry.box  then entry.box.Color   = tc.BoxColor  end
-            if entry.label then entry.label.Color = tc.TextColor end
-            if entry.line  then entry.line.Color  = tc.LineColor end
+        sampleSpeed(key, pos)
+        local scr, onScr = toScreen(pos)
+        if not scr or not onScr then
+            hideEntry(espPool[key])
+            continue
+        end
 
-            if tc.ShowBox and (frameCount % 3 == 0) then
-                if not sizeCache[key] then
-                    local ok2, sz = pcall(function() return part.Size end)
-                    sizeCache[key] = ok2 and sz or Vector3.new(60, 120, 60)
-                end
-                local sz = sizeCache[key]
-                local tSc, tOn = toScreen(pos + Vector3.new(0, sz.Y / 2, 0))
-                local bSc, bOn = toScreen(pos - Vector3.new(0, sz.Y / 2, 0))
-                local lSc, lOn = toScreen(pos - Vector3.new(sz.X / 2, 0, 0))
-                local rSc, rOn = toScreen(pos + Vector3.new(sz.X / 2, 0, 0))
-                local h, w, boxY
-                if tSc and bSc and lSc and rSc and tOn and bOn and lOn and rOn then
-                    h    = math.max(math.abs(tSc.Y - bSc.Y), 20)
-                    w    = math.max(math.abs(rSc.X - lSc.X), 20)
-                    boxY = tSc.Y
-                else
-                    h = 120; w = 60; boxY = scr.Y - 60
-                end
-                entry.box.Size     = Vector2.new(w, h)
-                entry.box.Position = Vector2.new(scr.X - w / 2, boxY)
-                entry.box.Color    = tc.BoxColor
-                entry.box.Visible  = true
-            elseif not tc.ShowBox then
-                entry.box.Visible = false
+        seen[key]               = true
+        activeKeys.tornado[key] = true
+        local entry = getPoolEntry(key, true, true)
+
+        if entry.box   then entry.box.Color   = tc.BoxColor  end
+        if entry.label then entry.label.Color = tc.TextColor end
+        if entry.line  then entry.line.Color  = tc.LineColor end
+
+        if tc.ShowBox and (frameCount % 3 == 0) then
+            if not sizeCache[key] then
+                local ok2, sz = pcall(function() return part.Size end)
+                sizeCache[key] = ok2 and sz or Vector3.new(60, 120, 60)
             end
+            local sz = sizeCache[key]
+            local tSc, tOn = toScreen(pos + Vector3.new(0, sz.Y / 2, 0))
+            local bSc, bOn = toScreen(pos - Vector3.new(0, sz.Y / 2, 0))
+            local lSc, lOn = toScreen(pos - Vector3.new(sz.X / 2, 0, 0))
+            local rSc, rOn = toScreen(pos + Vector3.new(sz.X / 2, 0, 0))
+            local h, w, boxY
+            if tSc and bSc and lSc and rSc and tOn and bOn and lOn and rOn then
+                h    = math_max(math_abs(tSc.Y - bSc.Y), 20)
+                w    = math_max(math_abs(rSc.X - lSc.X), 20)
+                boxY = tSc.Y
+            else
+                h = 120; w = 60; boxY = scr.Y - 60
+            end
+            entry.box.Size     = Vector2.new(w, h)
+            entry.box.Position = Vector2.new(scr.X - w / 2, boxY)
+            entry.box.Color    = tc.BoxColor
+            entry.box.Visible  = true
+        elseif not tc.ShowBox then
+            entry.box.Visible = false
+        end
 
-            local wind = readWindAttr(data.stormModel) or getSpeed(key)
-            local dist = (playerPos - pos).Magnitude
-            if dist > cfg.MaxESPDist then hideEntry(espPool[key]); continue end
-            entry.label.Text     = string.format("TORNADO [%dm] | %.1f mph", math.floor(dist), wind)
-            entry.label.Position = Vector2.new(scr.X, scr.Y - 46)
-            entry.label.Color    = tc.TextColor
-            entry.label.Visible  = true
+        local wind = readWindAttr(data.stormModel) or getSpeed(key)
+        entry.label.Text     = string.format("TORNADO [%dm] | %.1f mph", math_floor(dist), wind)
+        entry.label.Position = Vector2.new(scr.X, scr.Y - 46)
+        entry.label.Color    = tc.TextColor
+        entry.label.Visible  = true
 
-            local dir = getDir(key, pos)
-            if dir and (tc.ShowLine or tc.ShowCircle) then
-                local tgt        = pos + Vector3.new(dir.X * 1000, dir.Y * 500, dir.Z * 1000)
-                local tScr, tOn2 = toScreen(tgt)
-                if tScr and tOn2 then
-                    if tc.ShowLine and entry.line then
-                        entry.line.From    = Vector2.new(scr.X, scr.Y)
-                        entry.line.To      = Vector2.new(tScr.X, tScr.Y)
-                        entry.line.Color   = tc.LineColor
-                        entry.line.Visible = true
-                    elseif entry.line then
-                        entry.line.Visible = false
-                    end
-                    if tc.ShowCircle and entry.circle then
-                        entry.circle.Position = Vector2.new(tScr.X, tScr.Y)
-                        entry.circle.Color    = tc.CircleColor
-                        entry.circle.Visible  = true
-                    elseif entry.circle then
-                        entry.circle.Visible = false
-                    end
-                else
-                    if entry.line   then entry.line.Visible   = false end
-                    if entry.circle then entry.circle.Visible = false end
+        local dir = getDir(key, pos)
+        if dir and (tc.ShowLine or tc.ShowCircle) then
+            local tgt        = pos + Vector3.new(dir.X * 1000, dir.Y * 500, dir.Z * 1000)
+            local tScr, tOn2 = toScreen(tgt)
+            if tScr and tOn2 then
+                if tc.ShowLine and entry.line then
+                    entry.line.From    = Vector2.new(scr.X, scr.Y)
+                    entry.line.To      = Vector2.new(tScr.X, tScr.Y)
+                    entry.line.Color   = tc.LineColor
+                    entry.line.Visible = true
+                elseif entry.line then
+                    entry.line.Visible = false
+                end
+                if tc.ShowCircle and entry.circle then
+                    entry.circle.Position = Vector2.new(tScr.X, tScr.Y)
+                    entry.circle.Color    = tc.CircleColor
+                    entry.circle.Visible  = true
+                elseif entry.circle then
+                    entry.circle.Visible = false
                 end
             else
                 if entry.line   then entry.line.Visible   = false end
                 if entry.circle then entry.circle.Visible = false end
             end
+        else
+            if entry.line   then entry.line.Visible   = false end
+            if entry.circle then entry.circle.Visible = false end
         end
     end
 
@@ -427,12 +442,13 @@ end
 function updateProbeEsp(playerPos)
     if not cfg.ProbeESP.Visible then
         for key in pairs(activeKeys.probe) do hideEntry(espPool[key]) end
-        activeKeys.probe = {}
+        table_clear(activeKeys.probe)
         return
     end
 
-    local seen = {}
-    local pc   = cfg.Probe
+    local seen    = {}
+    local pc      = cfg.Probe
+    local maxDist = cfg.MaxESPDist
 
     for key, data in pairs(probeData) do
         local realPart = data.realPart
@@ -449,27 +465,34 @@ function updateProbeEsp(playerPos)
         local ok, pos = pcall(function() return realPart.Position end)
         if not ok or not pos then continue end
 
+        local dist = (playerPos - pos).Magnitude
+        if dist > maxDist then
+            hideEntry(espPool[key])
+            continue
+        end
+
         local scr, onScr = toScreen(pos)
-        if not scr or not onScr then hideEntry(espPool[key]); continue end
+        if not scr or not onScr then
+            hideEntry(espPool[key])
+            continue
+        end
 
         seen[key]             = true
         activeKeys.probe[key] = true
-        local entry   = getPoolEntry(key, false, false)
+        local entry = getPoolEntry(key, false, false)
 
         if entry.box   then entry.box.Color   = pc.BoxColor  end
         if entry.label then entry.label.Color = pc.TextColor end
 
-        local dist    = (playerPos - pos).Magnitude
-        if dist > cfg.MaxESPDist then hideEntry(espPool[key]); continue end
-        local scale   = math.clamp(1000 / dist, 0.3, 2)
-        local boxSize = math.floor(50 * scale)
+        local scale   = math_clamp(1000 / dist, 0.3, 2)
+        local boxSize = math_floor(50 * scale)
 
         entry.box.Size     = Vector2.new(boxSize, boxSize)
         entry.box.Position = Vector2.new(scr.X - boxSize / 2, scr.Y - boxSize / 2)
         entry.box.Color    = pc.BoxColor
         entry.box.Visible  = true
 
-        entry.label.Text     = string.format("PROBE [%dm]", math.floor(dist))
+        entry.label.Text     = string.format("PROBE [%dm]", math_floor(dist))
         entry.label.Position = Vector2.new(scr.X, scr.Y - boxSize / 2 - 15)
         entry.label.Color    = pc.TextColor
         entry.label.Visible  = true
