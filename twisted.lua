@@ -1,5 +1,6 @@
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 
 local findProbePart, scanProbes, updateProbeEsp
@@ -351,10 +352,9 @@ local function updateTornadoEsp(playerPos)
             activeKeys.tornado[key] = true
             local entry = getPoolEntry(key, true, true)
 
-            if entry.box    then entry.box.Color    = tc.BoxColor    end
-            if entry.label  then entry.label.Color  = tc.TextColor   end
-            if entry.circle then entry.circle.Color = tc.CircleColor end
-            if entry.line   then entry.line.Color   = tc.LineColor   end
+            if entry.box  then entry.box.Color   = tc.BoxColor  end
+            if entry.label then entry.label.Color = tc.TextColor end
+            if entry.line  then entry.line.Color  = tc.LineColor end
 
             if tc.ShowBox and (frameCount % 3 == 0) then
                 if not sizeCache[key] then
@@ -392,29 +392,32 @@ local function updateTornadoEsp(playerPos)
 
             local dir = getDir(key, pos)
             if dir and (tc.ShowLine or tc.ShowCircle) then
-                local tgt         = pos + Vector3.new(dir.X * 1000, dir.Y * 500, dir.Z * 1000)
-                local tScr, tOn2  = toScreen(tgt)
+                local tgt        = pos + Vector3.new(dir.X * 1000, dir.Y * 500, dir.Z * 1000)
+                local tScr, tOn2 = toScreen(tgt)
                 if tScr and tOn2 then
-                    if tc.ShowCircle then
-                        entry.circle.Position = Vector2.new(tScr.X, tScr.Y)
-                        entry.circle.Color    = tc.CircleColor
-                        entry.circle.Visible  = true
-                    else
-                        entry.circle.Visible = false
-                    end
-                    if tc.ShowLine then
+                    if tc.ShowLine and entry.line then
                         entry.line.From    = Vector2.new(scr.X, scr.Y)
                         entry.line.To      = Vector2.new(tScr.X, tScr.Y)
                         entry.line.Color   = tc.LineColor
                         entry.line.Visible = true
-                    else
+                    elseif entry.line then
                         entry.line.Visible = false
                     end
-                    continue
+                    if tc.ShowCircle and entry.circle then
+                        entry.circle.Position = Vector2.new(tScr.X, tScr.Y)
+                        entry.circle.Color    = tc.CircleColor
+                        entry.circle.Visible  = true
+                    elseif entry.circle then
+                        entry.circle.Visible = false
+                    end
+                else
+                    if entry.line   then entry.line.Visible   = false end
+                    if entry.circle then entry.circle.Visible = false end
                 end
+            else
+                if entry.line   then entry.line.Visible   = false end
+                if entry.circle then entry.circle.Visible = false end
             end
-            if entry.circle then entry.circle.Visible = false end
-            if entry.line   then entry.line.Visible   = false end
         end
     end
 
@@ -886,7 +889,8 @@ local function applyCarBoost()
 
     local maxSpeed = cfg.CarBoost.Force * 0.016
     local fwdSpeed = curVel.X * lv.X + curVel.Z * lv.Z
-    local accel    = math.max(0, maxSpeed - fwdSpeed) * 0.3
+    local gap      = math.max(0, maxSpeed - fwdSpeed)
+    local accel    = gap * (0.3 + 0.5 * (gap / (maxSpeed + 1)))
     local latSpeed = curVel.X * rv.X + curVel.Z * rv.Z
     local vx = curVel.X + lv.X * accel - rv.X * latSpeed * cfg.CarBoost.LatDamp
     local vz = curVel.Z + lv.Z * accel - rv.Z * latSpeed * cfg.CarBoost.LatDamp
@@ -910,11 +914,14 @@ local function applyCarBrake()
     if not vel then return end
 
     local hSpeed = math.sqrt(vel.X * vel.X + vel.Z * vel.Z)
-    local decay = math.clamp(cfg.CarBrake.Force * 0.016 / math.max(hSpeed, 1), 0, 1)
-    local ratio = math.max(0, 1 - decay)
+    local decay  = math.clamp(cfg.CarBrake.Force * 0.016 / math.max(hSpeed, 1), 0, 1)
+    local ratio  = math.max(0, 1 - decay)
     if hSpeed * ratio < 0.5 then ratio = 0 end
 
-    writeVel(prim, Vector3.new(vel.X * ratio, vel.Y, vel.Z * ratio))
+    local vDecay = math.clamp(cfg.CarBrake.Force * 0.008 / math.max(math.abs(vel.Y), 1), 0, 1)
+    local vRatio = math.max(0, 1 - vDecay)
+
+    writeVel(prim, Vector3.new(vel.X * ratio, vel.Y * vRatio, vel.Z * ratio))
     pcall(function()
         memory_write("float", prim + 0x104,       0)
         memory_write("float", prim + 0x104 + 0x4, 0)
@@ -922,32 +929,38 @@ local function applyCarBrake()
     end)
 end
 
-local function applyCharBoost()
+local function applyCharBoost(dt)
     local char = LocalPlayer.Character
     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
     local prim = readPrim(hrp)
     if not prim then return end
-    local ok, cf = pcall(function() return hrp.CFrame end)
-    if not ok or not cf then return end
+    local cam = workspace.CurrentCamera
+    if not cam then return end
 
-    local lv     = cf.LookVector
-    local rv     = cf.RightVector
-    local curVel = readVel(prim)
-    if not curVel then return end
+    local lv = cam.CFrame.LookVector
+    local rv = cam.CFrame.RightVector
+    local flat_lv = Vector3.new(lv.X, 0, lv.Z)
+    local flat_rv = Vector3.new(rv.X, 0, rv.Z)
+    if flat_lv.Magnitude > 0.01 then flat_lv = flat_lv.Unit end
+    if flat_rv.Magnitude > 0.01 then flat_rv = flat_rv.Unit end
 
-    local maxSpeed = cfg.CharBoost.Force * 0.016
-    local fwdSpeed = curVel.X * lv.X + curVel.Z * lv.Z
-    local accel    = math.max(0, maxSpeed - fwdSpeed) * 0.3
-    local latSpeed = curVel.X * rv.X + curVel.Z * rv.Z
-    local vx = curVel.X + lv.X * accel - rv.X * latSpeed * 0.4
-    local vz = curVel.Z + lv.Z * accel - rv.Z * latSpeed * 0.4
-    local hMag = math.sqrt(vx * vx + vz * vz)
-    if hMag > maxSpeed then
-        vx = vx * maxSpeed / hMag
-        vz = vz * maxSpeed / hMag
+    local move = Vector3.new()
+    if not UIS:GetFocusedTextBox() then
+        if UIS:IsKeyDown(Enum.KeyCode.W) then move = move + flat_lv end
+        if UIS:IsKeyDown(Enum.KeyCode.S) then move = move - flat_lv end
+        if UIS:IsKeyDown(Enum.KeyCode.A) then move = move - flat_rv end
+        if UIS:IsKeyDown(Enum.KeyCode.D) then move = move + flat_rv end
     end
-    writeVel(prim, Vector3.new(vx, curVel.Y, vz))
+
+    if move.Magnitude < 0.01 then return end
+
+    local speed  = cfg.CharBoost.Force * 0.016
+    local curPos = readPos(prim)
+    if not curPos then return end
+
+    writePos(prim, curPos + move.Unit * speed * dt)
+    zeroVel(prim)
 end
 
 local CONFIG_FILE = "storm_tracker_cfg.json"
@@ -1098,7 +1111,7 @@ local function BuildESP(Tab)
     end)
     S:Spacing()
     S:Text("Hide ESP beyond this distance")
-    S:SliderInt("MaxESPDist", "Max Render Distance (m)", 100, 10000, cfg.MaxESPDist, function(v)
+    S:SliderInt("MaxESPDist", "Max Render Distance (m)", 100, 500000, cfg.MaxESPDist, function(v)
         cfg.MaxESPDist = v
     end)
     S:Spacing()
@@ -1221,9 +1234,7 @@ local function BuildTween(Tab)
         cfg.Tween.Offset = v
     end)
     S:Spacing()
-    S:Toggle("tween_on", "Tween to Tornado", false, function() end)
-    tweenWidget = S:Keybind("tween_kb", cfg.Tween.KeyVK, "click")
-    tweenWidget:AddToHotkey("Tween to Tornado", "tween_on")
+    tweenWidget = S:Keybind("tween_kb", cfg.Tween.KeyVK, "hold")
     S:Spacing()
     S:Button("Go to Nearest Tornado", function() goToNearestTornado() end)
 end
@@ -1297,12 +1308,14 @@ local function BuildFreeze(Tab)
         notify(state and "Car Freeze enabled" or "Car Freeze disabled", "", 2)
     end)
     carFreezeWidget = S:Keybind("carfreeze_kb", cfg.CarFreeze.KeyVK, "toggle")
+    carFreezeWidget:AddToHotkey("Car Freeze", "CarFreeze")
     S:Spacing()
     S:Toggle("CharFreeze", "Character Freeze", cfg.CharacterFreeze.Enabled, function(state)
         cfg.CharacterFreeze.Enabled = state
         notify(state and "Character Freeze enabled" or "Character Freeze disabled", "", 2)
     end)
     charFreezeWidget = S:Keybind("charfreeze_kb", cfg.CharacterFreeze.KeyVK, "toggle")
+    charFreezeWidget:AddToHotkey("Character Freeze", "CharFreeze")
     S:Spacing()
     S:Tip("Car Freeze locks chassis CFrame every frame. Tornado cannot move it.")
 end
@@ -1385,7 +1398,7 @@ end)
 printl("[Storm Tracker] Loaded")
 task.wait(2)
 
-RunService.RenderStepped:Connect(function()
+RunService.RenderStepped:Connect(function(dt)
     if not isrbxactive() then return end
 
     if carFreezeWidget then
@@ -1395,6 +1408,16 @@ RunService.RenderStepped:Connect(function()
                 if freeze.chassis and freeze.chassis.Parent and freeze.prim and freeze.lockedPos then
                     writePos(freeze.prim, freeze.lockedPos)
                     zeroVel(freeze.prim)
+                    if freeze.lockedRot then
+                        for i, v in ipairs(freeze.lockedRot) do
+                            pcall(memory_write, "float", freeze.prim + OFF_CF_ROT + (i - 1) * 4, v)
+                        end
+                    end
+                    pcall(function()
+                        memory_write("float", freeze.prim + 0x104,       0)
+                        memory_write("float", freeze.prim + 0x104 + 0x4, 0)
+                        memory_write("float", freeze.prim + 0x104 + 0x8, 0)
+                    end)
                 else
                     freeze.active = false
                     applyCarFreeze()
@@ -1443,7 +1466,7 @@ RunService.RenderStepped:Connect(function()
     end
 
     if cfg.CharBoost.Enabled and charBoostWidget and charBoostWidget:IsEnabled() then
-        pcall(applyCharBoost)
+        pcall(applyCharBoost, dt)
     end
 
     if tweenWidget and tweenWidget:IsEnabled() then
@@ -1452,6 +1475,7 @@ RunService.RenderStepped:Connect(function()
     else
         _tweenPrev = false
     end
+
 end)
 
 RunService.Heartbeat:Connect(function()
