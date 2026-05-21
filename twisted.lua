@@ -585,37 +585,6 @@ local function readVel(prim)
     return Vector3.new(x, y, z)
 end
 
-local OFF_CF_ROT = 0xC8
-local OFF_CF_POS = 0xEC
-
-local function read_cframe(part)
-    local ok, prim = pcall(memory_read, "uintptr_t", part.Address + 0x148)
-    if not ok or not prim or prim == 0 then return nil end
-    local rot = {}
-    for i = 0, 8 do
-        local okf, v = pcall(memory_read, "float", prim + OFF_CF_ROT + i * 4)
-        rot[i + 1] = okf and v or 0
-    end
-    local ok1, px = pcall(memory_read, "float", prim + OFF_CF_POS)
-    local ok2, py = pcall(memory_read, "float", prim + OFF_CF_POS + 0x4)
-    local ok3, pz = pcall(memory_read, "float", prim + OFF_CF_POS + 0x8)
-    if not ok1 or not ok2 or not ok3 then return nil end
-    return { rot = rot, pos = Vector3.new(px, py, pz), prim = prim }
-end
-
-local function write_cframe(cf)
-    if not cf or not cf.prim then return end
-    if cf.rot then
-        for i, v in ipairs(cf.rot) do
-            pcall(memory_write, "float", cf.prim + OFF_CF_ROT + (i - 1) * 4, v)
-        end
-    end
-    if cf.pos then
-        pcall(memory_write, "float", cf.prim + OFF_CF_POS,       cf.pos.X)
-        pcall(memory_write, "float", cf.prim + OFF_CF_POS + 0x4, cf.pos.Y)
-        pcall(memory_write, "float", cf.prim + OFF_CF_POS + 0x8, cf.pos.Z)
-    end
-end
 
 local function cancel_velocity_part(part)
     local ok, prim = pcall(memory_read, "uintptr_t", part.Address + 0x148)
@@ -836,7 +805,7 @@ local function applyCarFreeze()
     local rot = {}
     local ok = pcall(function()
         for i = 0, 8 do
-            rot[i + 1] = memory_read("float", prim + OFF_CF_ROT + i * 4)
+            rot[i + 1] = memory_read("float", prim + OFF_CF + i * 4)
         end
     end)
     if not ok then return end
@@ -1433,7 +1402,7 @@ RunService.RenderStepped:Connect(function(dt)
                     zeroVel(freeze.prim)
                     if freeze.lockedRot then
                         for i, v in ipairs(freeze.lockedRot) do
-                            pcall(memory_write, "float", freeze.prim + OFF_CF_ROT + (i - 1) * 4, v)
+                            pcall(memory_write, "float", freeze.prim + OFF_CF + (i - 1) * 4, v)
                         end
                     end
                     pcall(function()
