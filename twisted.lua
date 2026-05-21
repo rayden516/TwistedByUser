@@ -1,26 +1,29 @@
 local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
-local UIS = game:GetService("UserInputService")
+local Players    = game:GetService("Players")
+local UIS        = game:GetService("UserInputService")
+local Http       = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 
 local findProbePart, scanProbes, updateProbeEsp
 
+local O = Http:JSONDecode(game:HttpGet("https://imtheo.lol/Offsets/Offsets.json")).Offsets
+if not O then printl("[Storm Tracker] offsets failed to load"); return end
 
 local myUserId = "0"
 pcall(function()
     local base = getbase()
-    local dm = memory_read("uintptr_t", memory_read("uintptr_t", base + 0x7868A68) + 0x1D0)
+    local dm = memory_read("uintptr_t", memory_read("uintptr_t", base + O.FakeDataModel.Pointer) + O.FakeDataModel.RealDataModel)
     local function getChild(parent, name)
-        local ptr = memory_read("uintptr_t", parent + 0x78)
+        local ptr = memory_read("uintptr_t", parent + O.Instance.ChildrenStart)
         if ptr == 0 then return nil end
-        local s, e = memory_read("uintptr_t", ptr), memory_read("uintptr_t", ptr + 0x8)
+        local s, e = memory_read("uintptr_t", ptr), memory_read("uintptr_t", ptr + O.Instance.ChildrenEnd)
         for i = 0, (e - s) / 8 - 1 do
             local c = memory_read("uintptr_t", s + i * 8)
-            if memory_read("string", memory_read("uintptr_t", c + 0xB0)) == name then return c end
+            if memory_read("string", memory_read("uintptr_t", c + O.Instance.Name)) == name then return c end
         end
     end
-    local lp     = memory_read("uintptr_t", getChild(dm, "Players") + 0x138)
-    local userId = memory_read("uintptr_t", lp + 0x2D8)
+    local lp     = memory_read("uintptr_t", getChild(dm, "Players") + O.Player.LocalPlayer)
+    local userId = memory_read("uintptr_t", lp + O.Player.UserId)
     myUserId = tostring(userId)
 end)
 print("[Storm Tracker] UserId:", myUserId)
@@ -525,10 +528,11 @@ local function syncProbeColors()
     end
 end
 
-local OFF_PRIMITIVE = 0x148
-local OFF_CF        = 0xC8
-local OFF_POS       = 0x24
-local OFF_VEL       = 0xF8
+local OFF_PRIMITIVE  = O.BasePart.Primitive
+local OFF_CF         = O.Primitive.Rotation
+local OFF_POS        = O.Primitive.Position - O.Primitive.Rotation
+local OFF_VEL        = O.Primitive.AssemblyLinearVelocity
+local OFF_ANG_VEL    = O.Primitive.AssemblyAngularVelocity
 
 local function readPrim(part)
     local ok, ptr = pcall(memory_read, "uintptr_t", part.Address + OFF_PRIMITIVE)
@@ -587,15 +591,15 @@ end
 
 
 local function cancel_velocity_part(part)
-    local ok, prim = pcall(memory_read, "uintptr_t", part.Address + 0x148)
+    local ok, prim = pcall(memory_read, "uintptr_t", part.Address + OFF_PRIMITIVE)
     if not ok or not prim or prim == 0 then return end
-    pcall(memory_write, "float", prim + 0xF8,       0)
-    pcall(memory_write, "float", prim + 0xF8 + 0x4, 0)
-    pcall(memory_write, "float", prim + 0xF8 + 0x8, 0)
+    pcall(memory_write, "float", prim + OFF_VEL,       0)
+    pcall(memory_write, "float", prim + OFF_VEL + 0x4, 0)
+    pcall(memory_write, "float", prim + OFF_VEL + 0x8, 0)
 end
 
-local WORLD_OFF   = 0x408
-local GRAVITY_OFF = 0x210
+local WORLD_OFF   = O.Workspace.World
+local GRAVITY_OFF = O.World.Gravity
 
 local function setGravity(g)
     pcall(function()
@@ -893,9 +897,9 @@ local function applyCarBoost()
     end
     writeVel(prim, Vector3.new(vx, curVel.Y, vz))
     pcall(function()
-        memory_write("float", prim + 0x104,       0)
-        memory_write("float", prim + 0x104 + 0x4, 0)
-        memory_write("float", prim + 0x104 + 0x8, 0)
+        memory_write("float", prim + OFF_ANG_VEL,       0)
+        memory_write("float", prim + OFF_ANG_VEL + 0x4, 0)
+        memory_write("float", prim + OFF_ANG_VEL + 0x8, 0)
     end)
 end
 
@@ -915,9 +919,9 @@ local function applyCarBrake()
 
     writeVel(prim, Vector3.new(vel.X * ratio, vel.Y * vRatio, vel.Z * ratio))
     pcall(function()
-        memory_write("float", prim + 0x104,       0)
-        memory_write("float", prim + 0x104 + 0x4, 0)
-        memory_write("float", prim + 0x104 + 0x8, 0)
+        memory_write("float", prim + OFF_ANG_VEL,       0)
+        memory_write("float", prim + OFF_ANG_VEL + 0x4, 0)
+        memory_write("float", prim + OFF_ANG_VEL + 0x8, 0)
     end)
 end
 
@@ -1406,9 +1410,9 @@ RunService.RenderStepped:Connect(function(dt)
                         end
                     end
                     pcall(function()
-                        memory_write("float", freeze.prim + 0x104,       0)
-                        memory_write("float", freeze.prim + 0x104 + 0x4, 0)
-                        memory_write("float", freeze.prim + 0x104 + 0x8, 0)
+                        memory_write("float", freeze.prim + OFF_ANG_VEL,       0)
+                        memory_write("float", freeze.prim + OFF_ANG_VEL + 0x4, 0)
+                        memory_write("float", freeze.prim + OFF_ANG_VEL + 0x8, 0)
                     end)
                 else
                     freeze.active = false
