@@ -875,54 +875,53 @@ local function applyCarBoost()
     if not prim then return end
     local ch = carCache.chassis
     if not ch then return end
-    local ok, cf = pcall(function() return ch.CFrame end)
-    if not ok or not cf then return end
-
-    local lv     = cf.LookVector
-    local rv     = cf.RightVector
-    local curVel = readVel(prim)
-    if not curVel then return end
-
+    local cf = ch.CFrame
+    local lvx, lvz = cf.LookVector.X, cf.LookVector.Z
+    local rvx, rvz = cf.RightVector.X, cf.RightVector.Z
+    local vb  = prim + OFF_VEL
+    local vx  = memory_read("float", vb)
+    local vy  = memory_read("float", vb + 0x4)
+    local vz  = memory_read("float", vb + 0x8)
     local maxSpeed = cfg.CarBoost.Force * 0.016
-    local fwdSpeed = curVel.X * lv.X + curVel.Z * lv.Z
-    local gap      = math.max(0, maxSpeed - fwdSpeed)
+    local gap      = math.max(0, maxSpeed - (vx * lvx + vz * lvz))
     local accel    = gap * (0.3 + 0.5 * (gap / (maxSpeed + 1)))
-    local latSpeed = curVel.X * rv.X + curVel.Z * rv.Z
-    local vx = curVel.X + lv.X * accel - rv.X * latSpeed * cfg.CarBoost.LatDamp
-    local vz = curVel.Z + lv.Z * accel - rv.Z * latSpeed * cfg.CarBoost.LatDamp
+    local latSpeed = vx * rvx + vz * rvz
+    local ld       = cfg.CarBoost.LatDamp
+    vx = vx + lvx * accel - rvx * latSpeed * ld
+    vz = vz + lvz * accel - rvz * latSpeed * ld
     local hMag = math.sqrt(vx * vx + vz * vz)
     if hMag > maxSpeed then
-        vx = vx * maxSpeed / hMag
-        vz = vz * maxSpeed / hMag
+        local s = maxSpeed / hMag
+        vx = vx * s
+        vz = vz * s
     end
-    writeVel(prim, Vector3.new(vx, curVel.Y, vz))
-    pcall(function()
-        memory_write("float", prim + OFF_ANG_VEL,       0)
-        memory_write("float", prim + OFF_ANG_VEL + 0x4, 0)
-        memory_write("float", prim + OFF_ANG_VEL + 0x8, 0)
-    end)
+    memory_write("float", vb,       vx)
+    memory_write("float", vb + 0x4, vy)
+    memory_write("float", vb + 0x8, vz)
+    local ab = prim + OFF_ANG_VEL
+    memory_write("float", ab,       0)
+    memory_write("float", ab + 0x4, 0)
+    memory_write("float", ab + 0x8, 0)
 end
 
 local function applyCarBrake()
     local prim = findCurrentPrim()
     if not prim then return end
-    local vel = readVel(prim)
-    if not vel then return end
-
-    local hSpeed = math.sqrt(vel.X * vel.X + vel.Z * vel.Z)
-    local decay  = math.clamp(cfg.CarBrake.Force * 0.016 / math.max(hSpeed, 1), 0, 1)
-    local ratio  = math.max(0, 1 - decay)
+    local vb = prim + OFF_VEL
+    local vx = memory_read("float", vb)
+    local vy = memory_read("float", vb + 0x4)
+    local vz = memory_read("float", vb + 0x8)
+    local hSpeed = math.sqrt(vx * vx + vz * vz)
+    local ratio  = math.max(0, 1 - math.clamp(cfg.CarBrake.Force * 0.016 / math.max(hSpeed, 1), 0, 1))
     if hSpeed * ratio < 0.5 then ratio = 0 end
-
-    local vDecay = math.clamp(cfg.CarBrake.Force * 0.008 / math.max(math.abs(vel.Y), 1), 0, 1)
-    local vRatio = math.max(0, 1 - vDecay)
-
-    writeVel(prim, Vector3.new(vel.X * ratio, vel.Y * vRatio, vel.Z * ratio))
-    pcall(function()
-        memory_write("float", prim + OFF_ANG_VEL,       0)
-        memory_write("float", prim + OFF_ANG_VEL + 0x4, 0)
-        memory_write("float", prim + OFF_ANG_VEL + 0x8, 0)
-    end)
+    local vRatio = math.max(0, 1 - math.clamp(cfg.CarBrake.Force * 0.008 / math.max(math.abs(vy), 1), 0, 1))
+    memory_write("float", vb,       vx * ratio)
+    memory_write("float", vb + 0x4, vy * vRatio)
+    memory_write("float", vb + 0x8, vz * ratio)
+    local ab = prim + OFF_ANG_VEL
+    memory_write("float", ab,       0)
+    memory_write("float", ab + 0x4, 0)
+    memory_write("float", ab + 0x8, 0)
 end
 
 local function applyCharBoost(dt)
@@ -933,30 +932,31 @@ local function applyCharBoost(dt)
     if not prim then return end
     local cam = workspace.CurrentCamera
     if not cam then return end
-
-    local lv = cam.CFrame.LookVector
-    local rv = cam.CFrame.RightVector
-    local flat_lv = Vector3.new(lv.X, 0, lv.Z)
-    local flat_rv = Vector3.new(rv.X, 0, rv.Z)
-    if flat_lv.Magnitude > 0.01 then flat_lv = flat_lv.Unit end
-    if flat_rv.Magnitude > 0.01 then flat_rv = flat_rv.Unit end
-
-    local move = Vector3.new()
+    local cf  = cam.CFrame
+    local lvx, lvz = cf.LookVector.X, cf.LookVector.Z
+    local rvx, rvz = cf.RightVector.X, cf.RightVector.Z
+    local lm = math.sqrt(lvx*lvx + lvz*lvz)
+    if lm > 0.01 then lvx = lvx/lm; lvz = lvz/lm end
+    local rm = math.sqrt(rvx*rvx + rvz*rvz)
+    if rm > 0.01 then rvx = rvx/rm; rvz = rvz/rm end
+    local mx, mz = 0, 0
     if not UIS:GetFocusedTextBox() then
-        if UIS:IsKeyDown(Enum.KeyCode.W) then move = move + flat_lv end
-        if UIS:IsKeyDown(Enum.KeyCode.S) then move = move - flat_lv end
-        if UIS:IsKeyDown(Enum.KeyCode.A) then move = move - flat_rv end
-        if UIS:IsKeyDown(Enum.KeyCode.D) then move = move + flat_rv end
+        if UIS:IsKeyDown(Enum.KeyCode.W) then mx = mx + lvx; mz = mz + lvz end
+        if UIS:IsKeyDown(Enum.KeyCode.S) then mx = mx - lvx; mz = mz - lvz end
+        if UIS:IsKeyDown(Enum.KeyCode.A) then mx = mx - rvx; mz = mz - rvz end
+        if UIS:IsKeyDown(Enum.KeyCode.D) then mx = mx + rvx; mz = mz + rvz end
     end
-
-    if move.Magnitude < 0.01 then return end
-
-    local speed  = cfg.CharBoost.Force * 0.016
-    local curPos = readPos(prim)
-    if not curPos then return end
-
-    writePos(prim, curPos + move.Unit * speed * dt)
-    zeroVel(prim)
+    local mm = math.sqrt(mx*mx + mz*mz)
+    if mm < 0.01 then return end
+    local s  = cfg.CharBoost.Force * 0.016 * dt / mm
+    local pb = prim + OFF_CF + OFF_POS
+    local vb = prim + OFF_VEL
+    memory_write("float", pb,       memory_read("float", pb)       + mx * s)
+    memory_write("float", pb + 0x4, memory_read("float", pb + 0x4))
+    memory_write("float", pb + 0x8, memory_read("float", pb + 0x8) + mz * s)
+    memory_write("float", vb,       0)
+    memory_write("float", vb + 0x4, 0)
+    memory_write("float", vb + 0x8, 0)
 end
 
 local CONFIG_FILE = "storm_tracker_cfg.json"
@@ -1402,18 +1402,33 @@ RunService.RenderStepped:Connect(function(dt)
         if cfActive then
             if freeze.active then
                 if freeze.chassis and freeze.chassis.Parent and freeze.prim and freeze.lockedPos then
-                    writePos(freeze.prim, freeze.lockedPos)
-                    zeroVel(freeze.prim)
-                    if freeze.lockedRot then
-                        for i, v in ipairs(freeze.lockedRot) do
-                            pcall(memory_write, "float", freeze.prim + OFF_CF + (i - 1) * 4, v)
-                        end
+                    local fp  = freeze.prim
+                    local pos = freeze.lockedPos
+                    local rot = freeze.lockedRot
+                    local pb  = fp + OFF_CF + OFF_POS
+                    local vb  = fp + OFF_VEL
+                    local rb  = fp + OFF_CF
+                    local ab  = fp + OFF_ANG_VEL
+                    memory_write("float", pb,       pos.X)
+                    memory_write("float", pb + 0x4, pos.Y)
+                    memory_write("float", pb + 0x8, pos.Z)
+                    memory_write("float", vb,       0)
+                    memory_write("float", vb + 0x4, 0)
+                    memory_write("float", vb + 0x8, 0)
+                    if rot then
+                        memory_write("float", rb,      rot[1])
+                        memory_write("float", rb + 4,  rot[2])
+                        memory_write("float", rb + 8,  rot[3])
+                        memory_write("float", rb + 12, rot[4])
+                        memory_write("float", rb + 16, rot[5])
+                        memory_write("float", rb + 20, rot[6])
+                        memory_write("float", rb + 24, rot[7])
+                        memory_write("float", rb + 28, rot[8])
+                        memory_write("float", rb + 32, rot[9])
                     end
-                    pcall(function()
-                        memory_write("float", freeze.prim + OFF_ANG_VEL,       0)
-                        memory_write("float", freeze.prim + OFF_ANG_VEL + 0x4, 0)
-                        memory_write("float", freeze.prim + OFF_ANG_VEL + 0x8, 0)
-                    end)
+                    memory_write("float", ab,       0)
+                    memory_write("float", ab + 0x4, 0)
+                    memory_write("float", ab + 0x8, 0)
                 else
                     freeze.active = false
                     applyCarFreeze()
@@ -1435,8 +1450,16 @@ RunService.RenderStepped:Connect(function(dt)
         if chActive then
             if charFreeze.active then
                 if charFreeze.hrp and charFreeze.hrp.Parent and charFreeze.prim and charFreeze.lockedPos then
-                    writePos(charFreeze.prim, charFreeze.lockedPos)
-                    zeroVel(charFreeze.prim)
+                    local cp = charFreeze.prim
+                    local pp = charFreeze.lockedPos
+                    local pb = cp + OFF_CF + OFF_POS
+                    local vb = cp + OFF_VEL
+                    memory_write("float", pb,       pp.X)
+                    memory_write("float", pb + 0x4, pp.Y)
+                    memory_write("float", pb + 0x8, pp.Z)
+                    memory_write("float", vb,       0)
+                    memory_write("float", vb + 0x4, 0)
+                    memory_write("float", vb + 0x8, 0)
                 else
                     charFreeze.active = false
                     applyCharFreeze()
@@ -1454,15 +1477,15 @@ RunService.RenderStepped:Connect(function(dt)
     end
 
     if cfg.CarBoost.Enabled and boostWidget and boostWidget:IsEnabled() then
-        pcall(applyCarBoost)
+        applyCarBoost()
     end
 
     if cfg.CarBrake.Enabled and brakeWidget and brakeWidget:IsEnabled() then
-        pcall(applyCarBrake)
+        applyCarBrake()
     end
 
     if cfg.CharBoost.Enabled and charBoostWidget and charBoostWidget:IsEnabled() then
-        pcall(applyCharBoost, dt)
+        applyCharBoost(dt)
     end
 
     if tweenWidget and tweenWidget:IsEnabled() then
@@ -1490,18 +1513,16 @@ RunService.Heartbeat:Connect(function()
     if cfg.SpeedHUD.Visible then
         local prim = findCurrentPrim()
         if prim then
-            local vel = readVel(prim)
-            if vel then
-                local spd = math.floor(math.sqrt(vel.X * vel.X + vel.Z * vel.Z))
-                local cam = workspace.CurrentCamera
-                if cam then
-                    speedHudLabel.Position = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y - 60)
-                end
-                speedHudLabel.Text    = spd .. " st/s"
-                speedHudLabel.Visible = true
-            else
-                speedHudLabel.Visible = false
+            local vb  = prim + OFF_VEL
+            local svx = memory_read("float", vb)
+            local svz = memory_read("float", vb + 0x8)
+            local spd = math_floor(math.sqrt(svx * svx + svz * svz))
+            local cam = workspace.CurrentCamera
+            if cam then
+                speedHudLabel.Position = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y - 60)
             end
+            speedHudLabel.Text    = spd .. " st/s"
+            speedHudLabel.Visible = true
         else
             speedHudLabel.Visible = false
         end
