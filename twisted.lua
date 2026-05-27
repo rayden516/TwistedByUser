@@ -28,6 +28,7 @@ pcall(function()
 end)
 print("[Storm Tracker] UserId:", myUserId)
 
+
 local cfg = {
     TornadoESP      = { Visible = false },
     ProbeESP        = { Visible = false },
@@ -149,11 +150,6 @@ local function toScreen(pos)
         local ok, scr, on = pcall(WorldToScreen, pos)
         if ok and scr then return scr, on end
     end
-    local cam = workspace.CurrentCamera
-    if cam then
-        local ok, v, vis = pcall(function() return cam:WorldToViewportPoint(pos) end)
-        if ok and v then return Vector2.new(v.X, v.Y), vis end
-    end
     return nil, false
 end
 
@@ -222,6 +218,7 @@ local tornadoData  = {}
 local probeData    = {}
 local probeCounter = 0
 local frameCount   = 0
+local espFrame     = 0
 
 function findProbePart(probe)
     if not probe or not probe:IsA("Model") then return nil end
@@ -377,7 +374,7 @@ local function updateTornadoEsp(playerPos)
         if entry.label then entry.label.Color = tc.TextColor end
         if entry.line  then entry.line.Color  = tc.LineColor end
 
-        if tc.ShowBox and (frameCount % 3 == 0) then
+        if tc.ShowBox and (espFrame % 2 == 0) then
             if not sizeCache[key] then
                 local ok2, sz = pcall(function() return part.Size end)
                 sizeCache[key] = ok2 and sz or Vector3.new(60, 120, 60)
@@ -1006,8 +1003,7 @@ local function saveConfig()
         SpeedHUD      = cfg.SpeedHUD.Visible,
     }
     pcall(function()
-        local hs = game:GetService("HttpService")
-        writefile(CONFIG_FILE, hs:JSONEncode(data))
+        writefile(CONFIG_FILE, Http:JSONEncode(data))
     end)
     notify("Config saved!", "", 3)
 end
@@ -1017,8 +1013,7 @@ local function loadConfig()
         if not isfile(CONFIG_FILE) then return end
         local raw = readfile(CONFIG_FILE)
         if not raw or raw == "" then return end
-        local hs   = game:GetService("HttpService")
-        local data = hs:JSONDecode(raw)
+        local data = Http:JSONDecode(raw)
         if type(data) ~= "table" then return end
 
         local function getBool(key, default)
@@ -1110,6 +1105,7 @@ local function BuildESP(Tab)
     S:SliderInt("MaxESPDist", "Max Render Distance (m)", 100, 500000, cfg.MaxESPDist, function(v)
         cfg.MaxESPDist = v
     end)
+    S:Spacing()
     S:Spacing()
     S:Button("Save Config", function() saveConfig() end)
 end
@@ -1500,7 +1496,8 @@ end)
 RunService.Heartbeat:Connect(function()
     if not isrbxactive() then return end
     frameCount = frameCount + 1
-    if frameCount % 2 == 0 then return end
+    if frameCount % 3 ~= 0 then return end
+    espFrame = espFrame + 1
 
     local char = LocalPlayer.Character
     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
