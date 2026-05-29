@@ -32,7 +32,7 @@ print("[Storm Tracker] UserId:", myUserId)
 local cfg = {
     TornadoESP      = { Visible = false },
     ProbeESP        = { Visible = false },
-    CarFreeze       = { Enabled = false, KeyVK = 0x4B },
+    CarFreeze       = { Enabled = false, Soft = false, KeyVK = 0x4B },
     CharacterFreeze = { Enabled = false, KeyVK = 0x4C },
     CarBoost        = { Enabled = false, Force = 50000, KeyVK = 0x05, LatDamp = 0.5 },
     CarBrake        = { Enabled = false, Force = 5000,  KeyVK = 0x58 },
@@ -51,6 +51,7 @@ local cfg = {
         TextColor = Color3.new(0, 1, 1),
     },
     Tween = {
+        Enabled = false,
         Speed  = 120,
         Height = 0.5,
         Offset = 30,
@@ -343,27 +344,27 @@ local function updateTornadoEsp(playerPos)
     local tc      = cfg.Tornado
     local maxDist = cfg.MaxESPDist
 
-    for key, data in pairs(tornadoData) do
+    local function step(key, data)
         local part = data.part
         if not part or not part.Parent then
             hideEntry(espPool[key])
-            continue
+            return
         end
 
         local ok, pos = pcall(function() return part.Position end)
-        if not ok or not pos then continue end
+        if not ok or not pos then return end
 
         local dist = (playerPos - pos).Magnitude
         if dist > maxDist then
             hideEntry(espPool[key])
-            continue
+            return
         end
 
         sampleSpeed(key, pos)
         local scr, onScr = toScreen(pos)
         if not scr or not onScr then
             hideEntry(espPool[key])
-            continue
+            return
         end
 
         seen[key]               = true
@@ -436,6 +437,10 @@ local function updateTornadoEsp(playerPos)
         end
     end
 
+    for key, data in pairs(tornadoData) do
+        step(key, data)
+    end
+
     cleanupBucket(activeKeys.tornado, seen)
 end
 
@@ -450,31 +455,31 @@ function updateProbeEsp(playerPos)
     local pc      = cfg.Probe
     local maxDist = cfg.MaxESPDist
 
-    for key, data in pairs(probeData) do
+    local function step(key, data)
         local realPart = data.realPart
         if not realPart or not realPart.Parent then
             if data.part and data.part.Parent then
                 realPart = findProbePart(data.part)
                 if realPart then data.realPart = realPart
-                else hideEntry(espPool[key]); continue end
+                else hideEntry(espPool[key]); return end
             else
-                hideEntry(espPool[key]); continue
+                hideEntry(espPool[key]); return
             end
         end
 
         local ok, pos = pcall(function() return realPart.Position end)
-        if not ok or not pos then continue end
+        if not ok or not pos then return end
 
         local dist = (playerPos - pos).Magnitude
         if dist > maxDist then
             hideEntry(espPool[key])
-            continue
+            return
         end
 
         local scr, onScr = toScreen(pos)
         if not scr or not onScr then
             hideEntry(espPool[key])
-            continue
+            return
         end
 
         seen[key]             = true
@@ -496,6 +501,10 @@ function updateProbeEsp(playerPos)
         entry.label.Position = Vector2.new(scr.X, scr.Y - boxSize / 2 - 15)
         entry.label.Color    = pc.TextColor
         entry.label.Visible  = true
+    end
+
+    for key, data in pairs(probeData) do
+        step(key, data)
     end
 
     cleanupBucket(activeKeys.probe, seen)
@@ -563,6 +572,19 @@ local function zeroVel(prim)
         memory_write("float", base,       0)
         memory_write("float", base + 0x4, 0)
         memory_write("float", base + 0x8, 0)
+    end)
+end
+
+local function freezeZeroVel(prim)
+    local vb = prim + OFF_VEL
+    local ab = prim + OFF_ANG_VEL
+    pcall(function()
+        memory_write("float", vb,       0)
+        memory_write("float", vb + 0x4, 0)
+        memory_write("float", vb + 0x8, 0)
+        memory_write("float", ab,       0)
+        memory_write("float", ab + 0x4, 0)
+        memory_write("float", ab + 0x8, 0)
     end)
 end
 
@@ -975,6 +997,7 @@ local function saveConfig()
         CarBoost    = cfg.CarBoost.Enabled,
         CarBrake    = cfg.CarBrake.Enabled,
         CarFreeze   = cfg.CarFreeze.Enabled,
+        CarFreezeSoft = cfg.CarFreeze.Soft,
         CharFreeze  = cfg.CharacterFreeze.Enabled,
         T_Box       = t.ShowBox,
         T_Line      = t.ShowLine,
@@ -988,6 +1011,7 @@ local function saveConfig()
         TweenSpeed  = cfg.Tween.Speed,
         TweenHeight = cfg.Tween.Height,
         TweenOffset = cfg.Tween.Offset,
+        TweenEnabled = cfg.Tween.Enabled,
         BoostForce  = cfg.CarBoost.Force,
         BrakeForce  = cfg.CarBrake.Force,
         BoostKB       = saveKeyVK(boostWidget,      cfg.CarBoost.KeyVK),
@@ -1040,6 +1064,7 @@ local function loadConfig()
         cfg.CarBoost.Enabled        = getBool("CarBoost",   false)
         cfg.CarBrake.Enabled        = getBool("CarBrake",   false)
         cfg.CarFreeze.Enabled       = getBool("CarFreeze",  false)
+        cfg.CarFreeze.Soft          = getBool("CarFreezeSoft", false)
         cfg.CharacterFreeze.Enabled = getBool("CharFreeze", false)
 
         local t = cfg.Tornado
@@ -1058,6 +1083,7 @@ local function loadConfig()
         cfg.Tween.Speed    = getNum("TweenSpeed",  120)
         cfg.Tween.Height   = getNum("TweenHeight", 0.5)
         cfg.Tween.Offset   = getNum("TweenOffset", 30)
+        cfg.Tween.Enabled  = getBool("TweenEnabled", false)
         cfg.CarBoost.Force        = getNum("BoostForce",  50000)
         cfg.CarBrake.Force        = getNum("BrakeForce",  5000)
         cfg.CarBoost.KeyVK        = getNum("BoostKB",       0x05)
@@ -1208,6 +1234,11 @@ end
 
 local function BuildTween(Tab)
     local S = Tab:Section("Tween to Tornado", "Right")
+    S:Toggle("TweenEnabled", "Tween to Tornado", cfg.Tween.Enabled, function(state)
+        cfg.Tween.Enabled = state
+        notify(state and "Tween to Tornado enabled" or "Tween to Tornado disabled", "", 2)
+    end)
+    S:Spacing()
     S:Text("Fly fast to tornado position")
     S:Text("Press again while moving to cancel")
     S:Spacing()
@@ -1227,6 +1258,7 @@ local function BuildTween(Tab)
     end)
     S:Spacing()
     tweenWidget = S:Keybind("tween_kb", cfg.Tween.KeyVK, "hold")
+    tweenWidget:AddToHotkey("Tween to Tornado", "TweenEnabled")
     S:Spacing()
     S:Button("Go to Nearest Tornado", function() goToNearestTornado() end)
 end
@@ -1301,6 +1333,10 @@ local function BuildFreeze(Tab)
     end)
     carFreezeWidget = S:Keybind("carfreeze_kb", cfg.CarFreeze.KeyVK, "toggle")
     carFreezeWidget:AddToHotkey("Car Freeze", "CarFreeze")
+    S:Toggle("CarFreezeSoft", "Soft (anti-fling)", cfg.CarFreeze.Soft, function(state)
+        cfg.CarFreeze.Soft = state
+        notify(state and "Car Freeze: soft anti-fling" or "Car Freeze: hard lock", "", 2)
+    end)
     S:Spacing()
     S:Toggle("CharFreeze", "Character Freeze", cfg.CharacterFreeze.Enabled, function(state)
         cfg.CharacterFreeze.Enabled = state
@@ -1309,7 +1345,7 @@ local function BuildFreeze(Tab)
     charFreezeWidget = S:Keybind("charfreeze_kb", cfg.CharacterFreeze.KeyVK, "toggle")
     charFreezeWidget:AddToHotkey("Character Freeze", "CharFreeze")
     S:Spacing()
-    S:Tip("Car Freeze locks chassis CFrame every frame. Tornado cannot move it.")
+    S:Tip("Hard lock pins the chassis CFrame. Soft only zeroes velocity each frame, so the tornado lifts you slightly instead of flinging you.")
 end
 
 
@@ -1399,32 +1435,36 @@ RunService.RenderStepped:Connect(function(dt)
             if freeze.active then
                 if freeze.chassis and freeze.chassis.Parent and freeze.prim and freeze.lockedPos then
                     local fp  = freeze.prim
-                    local pos = freeze.lockedPos
-                    local rot = freeze.lockedRot
-                    local pb  = fp + OFF_CF + OFF_POS
                     local vb  = fp + OFF_VEL
-                    local rb  = fp + OFF_CF
                     local ab  = fp + OFF_ANG_VEL
-                    memory_write("float", pb,       pos.X)
-                    memory_write("float", pb + 0x4, pos.Y)
-                    memory_write("float", pb + 0x8, pos.Z)
-                    memory_write("float", vb,       0)
-                    memory_write("float", vb + 0x4, 0)
-                    memory_write("float", vb + 0x8, 0)
-                    if rot then
-                        memory_write("float", rb,      rot[1])
-                        memory_write("float", rb + 4,  rot[2])
-                        memory_write("float", rb + 8,  rot[3])
-                        memory_write("float", rb + 12, rot[4])
-                        memory_write("float", rb + 16, rot[5])
-                        memory_write("float", rb + 20, rot[6])
-                        memory_write("float", rb + 24, rot[7])
-                        memory_write("float", rb + 28, rot[8])
-                        memory_write("float", rb + 32, rot[9])
+                    if cfg.CarFreeze.Soft then
+                        freezeZeroVel(fp)
+                    else
+                        local pos = freeze.lockedPos
+                        local rot = freeze.lockedRot
+                        local pb  = fp + OFF_CF + OFF_POS
+                        local rb  = fp + OFF_CF
+                        memory_write("float", pb,       pos.X)
+                        memory_write("float", pb + 0x4, pos.Y)
+                        memory_write("float", pb + 0x8, pos.Z)
+                        memory_write("float", vb,       0)
+                        memory_write("float", vb + 0x4, 0)
+                        memory_write("float", vb + 0x8, 0)
+                        if rot then
+                            memory_write("float", rb,      rot[1])
+                            memory_write("float", rb + 4,  rot[2])
+                            memory_write("float", rb + 8,  rot[3])
+                            memory_write("float", rb + 12, rot[4])
+                            memory_write("float", rb + 16, rot[5])
+                            memory_write("float", rb + 20, rot[6])
+                            memory_write("float", rb + 24, rot[7])
+                            memory_write("float", rb + 28, rot[8])
+                            memory_write("float", rb + 32, rot[9])
+                        end
+                        memory_write("float", ab,       0)
+                        memory_write("float", ab + 0x4, 0)
+                        memory_write("float", ab + 0x8, 0)
                     end
-                    memory_write("float", ab,       0)
-                    memory_write("float", ab + 0x4, 0)
-                    memory_write("float", ab + 0x8, 0)
                 else
                     freeze.active = false
                     applyCarFreeze()
@@ -1484,7 +1524,7 @@ RunService.RenderStepped:Connect(function(dt)
         applyCharBoost(dt)
     end
 
-    if tweenWidget and tweenWidget:IsEnabled() then
+    if cfg.Tween.Enabled and tweenWidget and tweenWidget:IsEnabled() then
         if not _tweenPrev then pcall(goToNearestTornado) end
         _tweenPrev = true
     else
@@ -1495,6 +1535,12 @@ end)
 
 RunService.Heartbeat:Connect(function()
     if not isrbxactive() then return end
+
+    if cfg.CarFreeze.Enabled and cfg.CarFreeze.Soft and carFreezeWidget and carFreezeWidget:IsEnabled()
+        and freeze.active and freeze.prim and freeze.chassis and freeze.chassis.Parent then
+        freezeZeroVel(freeze.prim)
+    end
+
     frameCount = frameCount + 1
     if frameCount % 3 ~= 0 then return end
     espFrame = espFrame + 1
