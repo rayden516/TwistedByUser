@@ -1,13 +1,14 @@
 local RunService = game:GetService("RunService")
 local Players    = game:GetService("Players")
-local UIS        = game:GetService("UserInputService")
 local Http       = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
+
+if _G.StormTrackerCleanup then _G.StormTrackerCleanup() end
 
 local findProbePart, scanProbes, updateProbeEsp
 
 local O = Http:JSONDecode(game:HttpGet("https://imtheo.lol/Offsets/Offsets.json")).Offsets
-if not O then printl("[Storm Tracker] offsets failed to load"); return end
+if not O then print("[Storm Tracker] offsets failed to load"); return end
 
 local myUserId = "0"
 pcall(function()
@@ -127,12 +128,10 @@ local function removeEntry(key)
     local entry = espPool[key]
     if not entry then return end
     hideEntry(entry)
-    pcall(function()
-        if entry.box    then entry.box:Remove()    end
-        if entry.label  then entry.label:Remove()  end
-        if entry.circle then entry.circle:Remove() end
-        if entry.line   then entry.line:Remove()   end
-    end)
+    if entry.box    then entry.box:Remove()    end
+    if entry.label  then entry.label:Remove()  end
+    if entry.circle then entry.circle:Remove() end
+    if entry.line   then entry.line:Remove()   end
     espPool[key] = nil
 end
 
@@ -148,8 +147,8 @@ end
 local function toScreen(pos)
     if not pos then return nil, false end
     if type(WorldToScreen) == "function" then
-        local ok, scr, on = pcall(WorldToScreen, pos)
-        if ok and scr then return scr, on end
+        local scr, on = WorldToScreen(pos)
+        if scr then return scr, on end
     end
     return nil, false
 end
@@ -166,8 +165,8 @@ local function readWindAttr(storm)
     for _, obj in ipairs(targets) do
         if obj and obj.GetAttribute then
             for _, a in ipairs(WIND_ATTRS) do
-                local ok, v = pcall(function() return obj:GetAttribute(a) end)
-                if ok and type(v) == "number" and v > 0 then
+                local v = obj:GetAttribute(a)
+                if type(v) == "number" and v > 0 then
                     return v > 50 and v or v * 2.237
                 end
             end
@@ -217,9 +216,9 @@ end
 
 local tornadoData  = {}
 local probeData    = {}
-local probeCounter = 0
-local frameCount   = 0
 local espFrame     = 0
+local lastScan     = 0
+local lastEsp      = 0
 
 function findProbePart(probe)
     if not probe or not probe:IsA("Model") then return nil end
@@ -231,8 +230,7 @@ function findProbePart(probe)
             if child.Name:find("Tower Probe_Cylinder") then return child end
             if not fallbackMesh then fallbackMesh = child end
         elseif child:IsA("BasePart") and not fallbackBase then
-            local ok, _ = pcall(function() return child.Position end)
-            if ok then fallbackBase = child end
+            fallbackBase = child
         end
     end
     return fallbackMesh or fallbackBase
@@ -266,20 +264,22 @@ local function scanTornadoes()
             local rot = storm:FindFirstChild("rotation")
             local ts  = rot and rot:FindFirstChild("tornado_scan")
             if ts and ts:IsA("BasePart") then
-                foundParts[ts] = storm
-                if not tornadoData[ts] then
-                    printl("[ScanTornadoes] New tornado: " .. storm.Name)
-                    tornadoData[ts] = { part = ts, stormModel = storm }
+                local addr = ts.Address
+                foundParts[addr] = true
+                if not tornadoData[addr] then
+                    print("[ScanTornadoes] New tornado: " .. storm.Name)
+                    tornadoData[addr] = { part = ts, stormModel = storm }
                 else
-                    tornadoData[ts].stormModel = storm
+                    tornadoData[addr].part       = ts
+                    tornadoData[addr].stormModel = storm
                 end
             end
         end
     end
 
     local dead = {}
-    for key in pairs(tornadoData) do
-        if not foundParts[key] or not key.Parent then
+    for key, data in pairs(tornadoData) do
+        if not foundParts[key] or not data.part:IsDescendantOf(workspace) then
             dead[#dead + 1] = key
         end
     end
@@ -293,35 +293,35 @@ function scanProbes()
 
     local liveSet = {}
     for _, probe in ipairs(pfold:GetChildren()) do
-        if probe:IsA("Model") then
-            local isMine = (probe.Name == myUserId)
-                or (myUserId and probe.Name:find(myUserId, 1, true))
-            if isMine then liveSet[probe] = true end
+        local name = probe.Name
+        local isMine = (name == myUserId)
+            or (myUserId ~= "0" and name:find(myUserId, 1, true))
+        if isMine and probe:IsA("Model") then
+            liveSet[probe.Address] = probe
         end
     end
 
     local dead = {}
-    for key, data in pairs(probeData) do
-        if not liveSet[data.part] then dead[#dead + 1] = key end
+    for addr, data in pairs(probeData) do
+        if not liveSet[addr] or not data.part:IsDescendantOf(workspace) then
+            dead[#dead + 1] = addr
+        end
     end
-    for _, key in ipairs(dead) do
-        removeEntry(key)
-        activeKeys.probe[key] = nil
-        probeData[key]        = nil
+    for _, addr in ipairs(dead) do
+        removeEntry(addr)
+        activeKeys.probe[addr] = nil
+        probeData[addr]        = nil
     end
 
-    for probe in pairs(liveSet) do
-        local exists = false
-        for _, data in pairs(probeData) do
-            if data.part == probe then exists = true; break end
-        end
-        if not exists then
+    for addr, probe in pairs(liveSet) do
+        local data = probeData[addr]
+        if data then
+            data.part = probe
+        else
             local part = findProbePart(probe)
             if part then
-                probeCounter = probeCounter + 1
-                local key    = probe.Name .. "_" .. probeCounter
-                probeData[key] = { part = probe, realPart = part }
-                printl("[ProbeESP] Added: " .. key)
+                probeData[addr] = { part = probe, realPart = part }
+                print("[ProbeESP] Added: " .. probe.Name)
             end
         end
     end
@@ -346,14 +346,12 @@ local function updateTornadoEsp(playerPos)
 
     local function step(key, data)
         local part = data.part
-        if not part or not part.Parent then
+        if not part or not part:IsDescendantOf(workspace) then
             hideEntry(espPool[key])
             return
         end
 
-        local ok, pos = pcall(function() return part.Position end)
-        if not ok or not pos then return end
-
+        local pos = part.Position
         local dist = (playerPos - pos).Magnitude
         if dist > maxDist then
             hideEntry(espPool[key])
@@ -377,8 +375,7 @@ local function updateTornadoEsp(playerPos)
 
         if tc.ShowBox and (espFrame % 2 == 0) then
             if not sizeCache[key] then
-                local ok2, sz = pcall(function() return part.Size end)
-                sizeCache[key] = ok2 and sz or Vector3.new(60, 120, 60)
+                sizeCache[key] = part.Size or Vector3.new(60, 120, 60)
             end
             local sz = sizeCache[key]
             local tSc, tOn = toScreen(pos + Vector3.new(0, sz.Y / 2, 0))
@@ -457,8 +454,8 @@ function updateProbeEsp(playerPos)
 
     local function step(key, data)
         local realPart = data.realPart
-        if not realPart or not realPart.Parent then
-            if data.part and data.part.Parent then
+        if not realPart or not realPart:IsDescendantOf(workspace) then
+            if data.part and data.part:IsDescendantOf(workspace) then
                 realPart = findProbePart(data.part)
                 if realPart then data.realPart = realPart
                 else hideEntry(espPool[key]); return end
@@ -467,9 +464,7 @@ function updateProbeEsp(playerPos)
             end
         end
 
-        local ok, pos = pcall(function() return realPart.Position end)
-        if not ok or not pos then return end
-
+        local pos = realPart.Position
         local dist = (playerPos - pos).Magnitude
         if dist > maxDist then
             hideEntry(espPool[key])
@@ -548,73 +543,37 @@ end
 
 local function readPos(prim)
     local base = prim + OFF_CF + OFF_POS
-    local ok, x, y, z = pcall(function()
-        return memory_read("float", base),
-               memory_read("float", base + 0x4),
-               memory_read("float", base + 0x8)
-    end)
-    if not ok then return nil end
+    local x = memory_read("float", base)
+    local y = memory_read("float", base + 0x4)
+    local z = memory_read("float", base + 0x8)
     return Vector3.new(x, y, z)
 end
 
 local function writePos(prim, pos)
     local base = prim + OFF_CF + OFF_POS
-    pcall(function()
-        memory_write("float", base,       pos.X)
-        memory_write("float", base + 0x4, pos.Y)
-        memory_write("float", base + 0x8, pos.Z)
-    end)
-end
-
-local function zeroVel(prim)
-    local base = prim + OFF_VEL
-    pcall(function()
-        memory_write("float", base,       0)
-        memory_write("float", base + 0x4, 0)
-        memory_write("float", base + 0x8, 0)
-    end)
+    memory_write("float", base,       pos.X)
+    memory_write("float", base + 0x4, pos.Y)
+    memory_write("float", base + 0x8, pos.Z)
 end
 
 local function freezeZeroVel(prim)
     local vb = prim + OFF_VEL
     local ab = prim + OFF_ANG_VEL
-    pcall(function()
-        memory_write("float", vb,       0)
-        memory_write("float", vb + 0x4, 0)
-        memory_write("float", vb + 0x8, 0)
-        memory_write("float", ab,       0)
-        memory_write("float", ab + 0x4, 0)
-        memory_write("float", ab + 0x8, 0)
-    end)
-end
-
-local function writeVel(prim, vel)
-    local base = prim + OFF_VEL
-    pcall(function()
-        memory_write("float", base,       vel.X)
-        memory_write("float", base + 0x4, vel.Y)
-        memory_write("float", base + 0x8, vel.Z)
-    end)
-end
-
-local function readVel(prim)
-    local base = prim + OFF_VEL
-    local ok, x, y, z = pcall(function()
-        return memory_read("float", base),
-               memory_read("float", base + 0x4),
-               memory_read("float", base + 0x8)
-    end)
-    if not ok then return nil end
-    return Vector3.new(x, y, z)
+    memory_write("float", vb,       0)
+    memory_write("float", vb + 0x4, 0)
+    memory_write("float", vb + 0x8, 0)
+    memory_write("float", ab,       0)
+    memory_write("float", ab + 0x4, 0)
+    memory_write("float", ab + 0x8, 0)
 end
 
 
 local function cancel_velocity_part(part)
-    local ok, prim = pcall(memory_read, "uintptr_t", part.Address + OFF_PRIMITIVE)
-    if not ok or not prim or prim == 0 then return end
-    pcall(memory_write, "float", prim + OFF_VEL,       0)
-    pcall(memory_write, "float", prim + OFF_VEL + 0x4, 0)
-    pcall(memory_write, "float", prim + OFF_VEL + 0x8, 0)
+    local prim = readPrim(part)
+    if not prim then return end
+    memory_write("float", prim + OFF_VEL,       0)
+    memory_write("float", prim + OFF_VEL + 0x4, 0)
+    memory_write("float", prim + OFF_VEL + 0x8, 0)
 end
 
 local WORLD_OFF   = O.Workspace.World
@@ -637,8 +596,8 @@ local function cancelTween()
     local char = LocalPlayer.Character
     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
     local hum  = char and char:FindFirstChild("Humanoid")
-    if hrp then pcall(cancel_velocity_part, hrp) end
-    if hum then pcall(function() hum.PlatformStand = false end) end
+    if hrp then cancel_velocity_part(hrp) end
+    if hum then hum.PlatformStand = false end
 end
 
 local function tweenToTarget(targetPos, isProbe)
@@ -651,7 +610,7 @@ local function tweenToTarget(targetPos, isProbe)
     local hum  = char and char:FindFirstChild("Humanoid")
     if not hrp then tweenActive = false; setGravity(196.2); return end
 
-    if hum then pcall(function() hum.PlatformStand = true end) end
+    if hum then hum.PlatformStand = true end
 
     local arrivalDist = isProbe and 5 or 10
     local decelDist   = isProbe and 30 or 40
@@ -677,7 +636,7 @@ local function tweenToTarget(targetPos, isProbe)
                     local prim = readPrim(rp)
                     if prim then writePos(prim, targetPos) end
                 end
-                pcall(function() rp.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end)
+                rp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
                 cancelTween()
                 notify("Arrived!", "", 2)
                 break
@@ -696,7 +655,7 @@ local function tweenToTarget(targetPos, isProbe)
                 dir.Z * speed
             )
 
-            pcall(function() rp.AssemblyLinearVelocity = vel end)
+            rp.AssemblyLinearVelocity = vel
 
             task.wait(1 / 30)
         end
@@ -708,15 +667,14 @@ local function goToNearestTornado()
     local char = LocalPlayer.Character
     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then notify("No character", "", 2); return end
+    scanTornadoes()
     local pp               = hrp.Position
     local bestDist, bestPos = math.huge, nil
     for _, data in pairs(tornadoData) do
-        if data.part and data.part.Parent then
-            local ok, pos = pcall(function() return data.part.Position end)
-            if ok and pos then
-                local d = (pp - pos).Magnitude
-                if d < bestDist then bestDist = d; bestPos = pos end
-            end
+        if data.part and data.part:IsDescendantOf(workspace) then
+            local pos = data.part.Position
+            local d = (pp - pos).Magnitude
+            if d < bestDist then bestDist = d; bestPos = pos end
         end
     end
     if not bestPos then notify("No tornado found", "", 2); return end
@@ -742,15 +700,13 @@ local function getMyProbesSorted(playerPos)
                 or (myUserId ~= "0" and probe.Name:find(myUserId, 1, true))
             if isMine then
                 local part = findProbePart(probe)
-                if part and part.Parent then
-                    local ok, pos = pcall(function() return part.Position end)
-                    if ok and pos then
-                        list[#list + 1] = {
-                            pos  = pos,
-                            dist = (playerPos - pos).Magnitude,
-                            name = probe.Name,
-                        }
-                    end
+                if part and part:IsDescendantOf(workspace) then
+                    local pos = part.Position
+                    list[#list + 1] = {
+                        pos  = pos,
+                        dist = (playerPos - pos).Magnitude,
+                        name = probe.Name,
+                    }
                 end
             end
         end
@@ -826,12 +782,9 @@ local function applyCarFreeze()
     local pos = readPos(prim)
     if not pos then return end
     local rot = {}
-    local ok = pcall(function()
-        for i = 0, 8 do
-            rot[i + 1] = memory_read("float", prim + OFF_CF + i * 4)
-        end
-    end)
-    if not ok then return end
+    for i = 0, 8 do
+        rot[i + 1] = memory_read("float", prim + OFF_CF + i * 4)
+    end
     freeze.chassis   = ch
     freeze.lockedPos = pos
     freeze.lockedRot = rot
@@ -951,20 +904,18 @@ local function applyCharBoost(dt)
     if not prim then return end
     local cam = workspace.CurrentCamera
     if not cam then return end
-    local cf  = cam.CFrame
-    local lvx, lvz = cf.LookVector.X, cf.LookVector.Z
-    local rvx, rvz = cf.RightVector.X, cf.RightVector.Z
+    local camPos = cam.Position
+    local hrpPos = hrp.Position
+    local lvx, lvz = hrpPos.X - camPos.X, hrpPos.Z - camPos.Z
     local lm = math.sqrt(lvx*lvx + lvz*lvz)
-    if lm > 0.01 then lvx = lvx/lm; lvz = lvz/lm end
-    local rm = math.sqrt(rvx*rvx + rvz*rvz)
-    if rm > 0.01 then rvx = rvx/rm; rvz = rvz/rm end
+    if lm < 0.01 then return end
+    lvx = lvx/lm; lvz = lvz/lm
+    local rvx, rvz = -lvz, lvx
     local mx, mz = 0, 0
-    if not UIS:GetFocusedTextBox() then
-        if UIS:IsKeyDown(Enum.KeyCode.W) then mx = mx + lvx; mz = mz + lvz end
-        if UIS:IsKeyDown(Enum.KeyCode.S) then mx = mx - lvx; mz = mz - lvz end
-        if UIS:IsKeyDown(Enum.KeyCode.A) then mx = mx - rvx; mz = mz - rvz end
-        if UIS:IsKeyDown(Enum.KeyCode.D) then mx = mx + rvx; mz = mz + rvz end
-    end
+    if iskeypressed(0x57) then mx = mx + lvx; mz = mz + lvz end
+    if iskeypressed(0x53) then mx = mx - lvx; mz = mz - lvz end
+    if iskeypressed(0x41) then mx = mx - rvx; mz = mz - rvz end
+    if iskeypressed(0x44) then mx = mx + rvx; mz = mz + rvz end
     local mm = math.sqrt(mx*mx + mz*mz)
     if mm < 0.01 then return end
     local s  = cfg.CharBoost.Force * 0.016 * dt / mm
@@ -1289,16 +1240,16 @@ local function BuildTweenProbe(Tab)
     S:Button("List My Probes", function()
         local char = LocalPlayer.Character
         local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-        if not hrp then printl("[Probes] No character"); return end
+        if not hrp then print("[Probes] No character"); return end
         local list = getMyProbesSorted(hrp.Position)
         if #list == 0 then
-            printl("[Probes] No probes found for userId: " .. myUserId)
+            print("[Probes] No probes found for userId: " .. myUserId)
             return
         end
-        printl(string.format("[Probes] Found %d probe(s) for userId %s:", #list, myUserId))
+        print(string.format("[Probes] Found %d probe(s) for userId %s:", #list, myUserId))
         for i, entry in ipairs(list) do
             local p = entry.pos
-            printl(string.format("  #%d | %.0fm away | %.0f, %.0f, %.0f",
+            print(string.format("  #%d | %.0fm away | %.0f, %.0f, %.0f",
                 i, entry.dist, p.X, p.Y, p.Z))
         end
     end)
@@ -1357,19 +1308,19 @@ local function BuildDebug(Tab)
         scanTornadoes()
         local after = 0
         for _ in pairs(tornadoData) do after = after + 1 end
-        printl(string.format("[Debug] Rescan: %d → %d tornadoes", before, after))
+        print(string.format("[Debug] Rescan: %d → %d tornadoes", before, after))
         notify(string.format("Rescanned: %d tornado(s)", after), "", 3)
     end)
     S:Spacing()
     S:Button("Active Tornadoes", function()
         local count = 0
         for _ in pairs(tornadoData) do count = count + 1 end
-        printl("[Debug] Tornadoes tracked: " .. count)
+        print("[Debug] Tornadoes tracked: " .. count)
         for key, data in pairs(tornadoData) do
-            if data.part and data.part.Parent then
+            if data.part and data.part:IsDescendantOf(workspace) then
                 local p    = data.part.Position
                 local wind = readWindAttr(data.stormModel) or getSpeed(key)
-                printl(string.format("  %s | %.0f,%.0f,%.0f | %.1f mph", key, p.X, p.Y, p.Z, wind))
+                print(string.format("  %s | %.0f,%.0f,%.0f | %.1f mph", key, p.X, p.Y, p.Z, wind))
             end
         end
     end)
@@ -1382,24 +1333,23 @@ local function BuildDebug(Tab)
             activeKeys.probe[key] = nil
             probeData[key]        = nil
         end
-        probeCounter = 0
         scanProbes()
-        printl("[Debug] Probe ESPs cleared and rescanned")
+        print("[Debug] Probe ESPs cleared and rescanned")
     end)
     S:Spacing()
     S:Button("Active Probes", function()
         local count = 0
         for key, data in pairs(probeData) do
-            if data.realPart and data.realPart.Parent then
+            if data.realPart and data.realPart:IsDescendantOf(workspace) then
                 local p    = data.realPart.Position
                 local char = LocalPlayer.Character
                 local hrp  = char and char:FindFirstChild("HumanoidRootPart")
                 local d    = hrp and (p - hrp.Position).Magnitude or 0
-                printl(string.format("  %s | %.0fm", key, d))
+                print(string.format("  %s | %.0fm", key, d))
                 count = count + 1
             end
         end
-        printl("[Debug] Total probes: " .. count)
+        print("[Debug] Total probes: " .. count)
     end)
 end
 
@@ -1423,10 +1373,20 @@ UI.AddTab("Storm Tracker 2", function(tab)
     BuildCharBoost(tab)
 end)
 
-printl("[Storm Tracker] Loaded")
+print("[Storm Tracker] Loaded")
 task.wait(2)
 
-RunService.RenderStepped:Connect(function(dt)
+local renderConn, heartbeatConn
+
+local function cleanup()
+    if renderConn then renderConn:Disconnect() end
+    if heartbeatConn then heartbeatConn:Disconnect() end
+    for key in pairs(espPool) do removeEntry(key) end
+    speedHudLabel:Remove()
+end
+_G.StormTrackerCleanup = cleanup
+
+renderConn = RunService.RenderStepped:Connect(function(dt)
     if not isrbxactive() then return end
 
     if carFreezeWidget then
@@ -1525,7 +1485,7 @@ RunService.RenderStepped:Connect(function(dt)
     end
 
     if cfg.Tween.Enabled and tweenWidget and tweenWidget:IsEnabled() then
-        if not _tweenPrev then pcall(goToNearestTornado) end
+        if not _tweenPrev then goToNearestTornado() end
         _tweenPrev = true
     else
         _tweenPrev = false
@@ -1533,16 +1493,23 @@ RunService.RenderStepped:Connect(function(dt)
 
 end)
 
-RunService.Heartbeat:Connect(function()
+heartbeatConn = RunService.Heartbeat:Connect(function()
     if not isrbxactive() then return end
+
+    local now = tick()
+    if now - lastScan >= 0.5 then
+        lastScan = now
+        if cfg.TornadoESP.Visible then scanTornadoes() end
+        if cfg.ProbeESP.Visible then scanProbes() end
+    end
 
     if cfg.CarFreeze.Enabled and cfg.CarFreeze.Soft and carFreezeWidget and carFreezeWidget:IsEnabled()
         and freeze.active and freeze.prim and freeze.chassis and freeze.chassis.Parent then
         freezeZeroVel(freeze.prim)
     end
 
-    frameCount = frameCount + 1
-    if frameCount % 3 ~= 0 then return end
+    if now - lastEsp < 0.05 then return end
+    lastEsp = now
     espFrame = espFrame + 1
 
     local char = LocalPlayer.Character
@@ -1550,8 +1517,8 @@ RunService.Heartbeat:Connect(function()
     if not hrp then return end
     local playerPos = hrp.Position
 
-    pcall(updateTornadoEsp, playerPos)
-    pcall(updateProbeEsp, playerPos)
+    updateTornadoEsp(playerPos)
+    updateProbeEsp(playerPos)
 
     if cfg.SpeedHUD.Visible then
         local prim = findCurrentPrim()
@@ -1574,12 +1541,3 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        if isrbxactive() then
-            pcall(scanTornadoes)
-            pcall(scanProbes)
-        end
-    end
-end)
