@@ -75,16 +75,6 @@ local cfg = {
     CollectKeyVK    = 0x71,
     CycleKeyVK      = 0x72,
     ProbeVK         = { 0x32, 0x33, 0x34, 0x35 },
-    TornadoESP      = false,
-    ProbeESP        = false,
-    TornadoESPColor = Color3.fromRGB(0, 255, 0),
-    ProbeESPColor   = Color3.fromRGB(255, 0, 255),
-    ShowStats       = true,
-    MinWindFilter   = 0,
-    MaxDistFilter   = 0,
-    AntiAFK         = false,
-    AntiAFKKeyVK    = 0x73,
-    Blacklist       = {},
 }
 
 local tornadoList    = {}
@@ -94,7 +84,6 @@ local _cyclePhase    = "place"
 local cycleKb        = nil
 local _cycleKbPrev   = false
 local farmTweenLock  = false
-local farmTweenGen   = 0
 local farmDir        = Vector3.new(0, 0, 1)
 
 local collectVisited = {}
@@ -114,9 +103,6 @@ local NAV_W_DIST    = 0.2
 local NAV_W_BLOCK   = 150
 local NAV_OMEGA_MIN = 0.15
 local NAV_CONF_MIN  = 0.6
-local NAV_W_FIELD       = 0.05
-local WIND_FIELD_CAP    = 400
-local WIND_FIELD_FACTOR = 0.25
 
 local hudLabel        = Drawing.new("Text")
 hudLabel.Center       = true
@@ -126,15 +112,6 @@ hudLabel.Size         = 16
 hudLabel.Transparency = 1
 hudLabel.Color        = Color3.new(1, 1, 1)
 hudLabel.Visible      = false
-
-local statsLabel        = Drawing.new("Text")
-statsLabel.Center       = true
-statsLabel.Outline      = true
-statsLabel.Font         = 2
-statsLabel.Size         = 14
-statsLabel.Transparency = 1
-statsLabel.Color        = Color3.new(0.6, 1, 0.6)
-statsLabel.Visible      = false
 
 local compassArrow        = Drawing.new("Triangle")
 compassArrow.Filled       = true
@@ -153,17 +130,6 @@ compassText.Color        = Color3.new(1, 0.5, 0)
 compassText.Visible      = false
 
 local lastCompass = 0
-local lastEsp     = 0
-local lastStats   = 0
-
-local stats = {
-    placed    = 0,
-    collected = 0,
-    startTime = tick(),
-}
-
-local antiAfkKb      = nil
-local _antiAfkKbPrev = false
 
 local CONFIG_FILE = "autofarm_cfg.json"
 
@@ -175,10 +141,7 @@ local function saveKeyVK(widget, default)
     return default
 end
 
-local function saveConfig(file)
-    file = file or CONFIG_FILE
-    local blacklist = {}
-    for name in pairs(cfg.Blacklist) do blacklist[#blacklist + 1] = name end
+local function saveConfig()
     local data = {
         ProbeCount      = cfg.ProbeCount,
         FrontOffset     = cfg.FrontOffset,
@@ -194,33 +157,24 @@ local function saveConfig(file)
         WindThreshold   = cfg.WindThreshold,
         ShowHUD         = cfg.ShowHUD,
         ShowCompass     = cfg.ShowCompass,
-        ShowStats       = cfg.ShowStats,
-        TornadoESP      = cfg.TornadoESP,
-        ProbeESP        = cfg.ProbeESP,
-        MinWindFilter   = cfg.MinWindFilter,
-        MaxDistFilter   = cfg.MaxDistFilter,
-        AntiAFK         = cfg.AntiAFK,
-        Blacklist       = blacklist,
         Selected        = cfg.Selected,
         CollectKB       = saveKeyVK(collectKb, cfg.CollectKeyVK),
         CycleKB         = saveKeyVK(cycleKb,   cfg.CycleKeyVK),
-        AntiAFKKB       = saveKeyVK(antiAfkKb, cfg.AntiAFKKeyVK),
         ProbeKB1        = saveKeyVK(probeKeyWidgets[1], cfg.ProbeVK[1]),
         ProbeKB2        = saveKeyVK(probeKeyWidgets[2], cfg.ProbeVK[2]),
         ProbeKB3        = saveKeyVK(probeKeyWidgets[3], cfg.ProbeVK[3]),
         ProbeKB4        = saveKeyVK(probeKeyWidgets[4], cfg.ProbeVK[4]),
     }
     pcall(function()
-        writefile(file, Http:JSONEncode(data))
+        writefile(CONFIG_FILE, Http:JSONEncode(data))
     end)
     notify("Config saved!", "", 3)
 end
 
-local function loadConfig(file)
-    file = file or CONFIG_FILE
+local function loadConfig()
     pcall(function()
-        if not isfile(file) then return end
-        local raw = readfile(file)
+        if not isfile(CONFIG_FILE) then return end
+        local raw = readfile(CONFIG_FILE)
         if not raw or raw == "" then return end
         local data = Http:JSONDecode(raw)
         if type(data) ~= "table" then return end
@@ -248,19 +202,6 @@ local function loadConfig(file)
         cfg.WindThreshold   = getNum("WindThreshold", cfg.WindThreshold)
         cfg.ShowHUD         = getBool("ShowHUD", cfg.ShowHUD)
         cfg.ShowCompass     = getBool("ShowCompass", cfg.ShowCompass)
-        cfg.ShowStats       = getBool("ShowStats", cfg.ShowStats)
-        cfg.TornadoESP      = getBool("TornadoESP", cfg.TornadoESP)
-        cfg.ProbeESP        = getBool("ProbeESP", cfg.ProbeESP)
-        cfg.MinWindFilter   = getNum("MinWindFilter", cfg.MinWindFilter)
-        cfg.MaxDistFilter   = getNum("MaxDistFilter", cfg.MaxDistFilter)
-        cfg.AntiAFK         = getBool("AntiAFK", cfg.AntiAFK)
-
-        cfg.Blacklist = {}
-        if type(data.Blacklist) == "table" then
-            for _, name in ipairs(data.Blacklist) do
-                if type(name) == "string" then cfg.Blacklist[name] = true end
-            end
-        end
 
         local mode = getStr("TargetMode", cfg.TargetMode)
         if mode == "manual" or mode == "nearest" or mode == "strongest" or mode == "smart" then
@@ -270,7 +211,6 @@ local function loadConfig(file)
 
         cfg.CollectKeyVK = getNum("CollectKB", cfg.CollectKeyVK)
         cfg.CycleKeyVK   = getNum("CycleKB",   cfg.CycleKeyVK)
-        cfg.AntiAFKKeyVK = getNum("AntiAFKKB", cfg.AntiAFKKeyVK)
         cfg.ProbeVK[1]   = getNum("ProbeKB1",  cfg.ProbeVK[1])
         cfg.ProbeVK[2]   = getNum("ProbeKB2",  cfg.ProbeVK[2])
         cfg.ProbeVK[3]   = getNum("ProbeKB3",  cfg.ProbeVK[3])
@@ -330,117 +270,11 @@ local function getStormSpeed(stormModel)
     return 0
 end
 
-local windFieldCache = {}
-
-local function getWindField(d)
-    local storm = d.storm
-    if not storm or not storm.Parent then return 0, 0 end
-    local key = d.name
-    local now = tick()
-    local cached = windFieldCache[key]
-    if cached and (now - cached.t) < 1 then
-        return cached.wind, cached.radius
-    end
-
-    local wind = getStormWind(storm)
-    local radius = 0
-    local part = d.part
-    local center = (part and part.Parent) and part.Position or nil
-
-    local windFolder = storm:FindFirstChild("wind")
-    if windFolder and center then
-        for _, p in ipairs(windFolder:GetChildren()) do
-            if p:IsA("BasePart") then
-                local pos = p.Position
-                local sz  = p.Size
-                local dx  = pos.X - center.X
-                local dz  = pos.Z - center.Z
-                local reach = math.sqrt(dx * dx + dz * dz) + math.max(sz.X, sz.Z) * 0.5
-                if reach > radius then radius = reach end
-            end
-        end
-    end
-
-    windFieldCache[key] = { t = now, wind = wind, radius = radius }
-    return wind, radius
-end
-
-local function windFieldNudge(fieldRadius)
-    local extra = fieldRadius - cfg.SafeRadius
-    if extra <= 0 then return 0 end
-    if extra > WIND_FIELD_CAP then extra = WIND_FIELD_CAP end
-    return extra * WIND_FIELD_FACTOR
-end
-
 local nav = {
     samples = {},
-    MAX     = 12,
-    MIN_DT  = 0.05,
+    MAX     = 6,
+    ALPHA   = 0.4,
 }
-
-local function fitOmega(pts)
-    local m = #pts
-    if m < 3 then return 0, 0 end
-
-    local times = {}
-    local headings = {}
-    local count = 0
-    local prevTheta = nil
-    local accum = 0
-    for i = 2, m do
-        local a = pts[i - 1]
-        local b = pts[i]
-        local dx = b.x - a.x
-        local dz = b.z - a.z
-        if (dx * dx + dz * dz) > 0.25 then
-            local theta = math.atan2(dz, dx)
-            if prevTheta then
-                local dth = theta - prevTheta
-                while dth > math.pi do dth = dth - 2 * math.pi end
-                while dth < -math.pi do dth = dth + 2 * math.pi end
-                accum = accum + dth
-            else
-                accum = theta
-            end
-            prevTheta = theta
-            count = count + 1
-            times[count] = (a.t + b.t) * 0.5
-            headings[count] = accum
-        end
-    end
-    if count < 3 then return 0, 0 end
-
-    local t0 = times[1]
-    local sumT, sumT2, sumH, sumTH = 0, 0, 0, 0
-    for i = 1, count do
-        local rt = times[i] - t0
-        sumT  = sumT  + rt
-        sumT2 = sumT2 + rt * rt
-        sumH  = sumH  + headings[i]
-        sumTH = sumTH + rt * headings[i]
-    end
-    local denom = (count * sumT2) - (sumT * sumT)
-    if denom <= 1e-6 then return 0, 0 end
-
-    local omega = ((count * sumTH) - (sumT * sumH)) / denom
-    local intercept = (sumH - omega * sumT) / count
-    local meanH = sumH / count
-    local ssRes, ssTot = 0, 0
-    for i = 1, count do
-        local rt = times[i] - t0
-        local rH = headings[i] - (intercept + omega * rt)
-        local dH = headings[i] - meanH
-        ssRes = ssRes + rH * rH
-        ssTot = ssTot + dH * dH
-    end
-    local quality = 1
-    if ssTot > 1e-6 then
-        quality = 1 - (ssRes / ssTot)
-        if quality < 0 then quality = 0 end
-        if quality > 1 then quality = 1 end
-    end
-    return omega, quality
-end
 
 local function navSample(d)
     local part = d.part
@@ -450,56 +284,52 @@ local function navSample(d)
     local key = d.name
     local h = nav.samples[key]
     if not h then
-        h = { pts = {}, vx = 0, vy = 0, vz = 0, omega = 0,
-              conf = 0, lastSeen = 0, dirX = 0, dirZ = 0, hasDir = false }
+        h = { pts = {}, vx = 0, vy = 0, vz = 0, omega = 0, theta = 0,
+              thetaTime = 0, hasTheta = false, conf = 0, lastSeen = 0,
+              dirX = 0, dirZ = 0, hasDir = false }
         nav.samples[key] = h
     end
 
     local now = tick()
     h.lastSeen = now
     local n = #h.pts
-    if n == 0 or (now - h.pts[n].t) >= nav.MIN_DT then
+    if n == 0 or (now - h.pts[n].t) >= 0.03 then
         h.pts[n + 1] = { x = pos.X, y = pos.Y, z = pos.Z, t = now }
         while #h.pts > nav.MAX do table.remove(h.pts, 1) end
     end
 
-    local m = #h.pts
-    if m >= 3 then
-        local t0 = h.pts[1].t
-        local sumT, sumT2 = 0, 0
-        local sumX, sumY, sumZ = 0, 0, 0
-        local sumTX, sumTY, sumTZ = 0, 0, 0
-        for i = 1, m do
-            local p  = h.pts[i]
-            local rt = p.t - t0
-            sumT  = sumT  + rt
-            sumT2 = sumT2 + rt * rt
-            sumX  = sumX  + p.x
-            sumY  = sumY  + p.y
-            sumZ  = sumZ  + p.z
-            sumTX = sumTX + rt * p.x
-            sumTY = sumTY + rt * p.y
-            sumTZ = sumTZ + rt * p.z
+    if #h.pts >= 2 then
+        local a  = h.pts[1]
+        local b  = h.pts[#h.pts]
+        local dt = b.t - a.t
+        if dt > 0.01 then
+            local ivx = (b.x - a.x) / dt
+            local ivy = (b.y - a.y) / dt
+            local ivz = (b.z - a.z) / dt
+            h.vx = h.vx * (1 - nav.ALPHA) + ivx * nav.ALPHA
+            h.vy = h.vy * (1 - nav.ALPHA) + ivy * nav.ALPHA
+            h.vz = h.vz * (1 - nav.ALPHA) + ivz * nav.ALPHA
         end
-        local denom = (m * sumT2) - (sumT * sumT)
-        if denom > 1e-6 then
-            h.vx = ((m * sumTX) - (sumT * sumX)) / denom
-            h.vy = ((m * sumTY) - (sumT * sumY)) / denom
-            h.vz = ((m * sumTZ) - (sumT * sumZ)) / denom
 
-            local sp = math.sqrt(h.vx * h.vx + h.vz * h.vz)
-            if sp > 2 then
-                h.dirX   = h.vx / sp
-                h.dirZ   = h.vz / sp
-                h.hasDir = true
+        local sp = math.sqrt(h.vx * h.vx + h.vz * h.vz)
+        if sp > 2 then
+            local theta = math.atan2(h.vz, h.vx)
+            if h.hasTheta and (now - h.thetaTime) > 0.01 then
+                local dth = theta - h.theta
+                while dth > math.pi do dth = dth - 2 * math.pi end
+                while dth < -math.pi do dth = dth + 2 * math.pi end
+                h.omega = h.omega * (1 - nav.ALPHA) + (dth / (now - h.thetaTime)) * nav.ALPHA
             end
-
-            local omega, quality = fitOmega(h.pts)
-            h.omega = omega
-            local fill = (m - 1) / (nav.MAX - 1)
-            if fill > 1 then fill = 1 end
-            h.conf = fill * quality
+            h.theta     = theta
+            h.thetaTime = now
+            h.hasTheta  = true
+            h.dirX      = h.vx / sp
+            h.dirZ      = h.vz / sp
+            h.hasDir    = true
+        else
+            h.omega = h.omega * 0.8
         end
+        h.conf = math.min((#h.pts - 1) / (nav.MAX - 1), 1)
     end
     return Vector3.new(h.vx, h.vy, h.vz)
 end
@@ -566,7 +396,7 @@ local function getDangerCircles()
         if part and part.Parent then
             local pos   = part.Position
             local vel   = navSample(d)
-            local wind, fieldRadius = getWindField(d)
+            local wind  = getStormWind(d.storm)
             local speed = math.sqrt(vel.X * vel.X + vel.Z * vel.Z)
             local lx, lz = navPredict(d, NAV_PREDICT)
             local lm   = math.sqrt(lx * lx + lz * lz)
@@ -575,11 +405,10 @@ local function getDangerCircles()
                 lx = lx / lm * cap
                 lz = lz / lm * cap
             end
-            local baseR = tornadoRadiusOf(d) + cfg.SafeRadius * (1 + wind / 80) * AVOID_MARGIN + speed * 0.25
             circles[#circles + 1] = {
                 x = pos.X + lx,
                 z = pos.Z + lz,
-                r = baseR + windFieldNudge(fieldRadius),
+                r = tornadoRadiusOf(d) + cfg.SafeRadius * (1 + wind / 80) * AVOID_MARGIN + speed * 0.25,
                 killR = tornadoRadiusOf(d) + cfg.SafeRadius * 0.35,
             }
         end
@@ -685,10 +514,10 @@ local function getSafeTarget(playerPos, d)
     local torPos = part.Position
     local stormModel = d.storm
 
-    local wind, fieldRadius = getWindField(d)
+    local wind         = getStormWind(stormModel)
     local stormSpeed   = getStormSpeed(stormModel)
     local windScale    = 1 + wind / 80
-    local r            = tornadoRadiusOf(d) + cfg.SafeRadius * windScale + windFieldNudge(fieldRadius)
+    local r            = tornadoRadiusOf(d) + cfg.SafeRadius * windScale
     local r2           = r * r
 
     local h = nav.samples[d.name]
@@ -780,23 +609,12 @@ end
 local function navScore(d, playerPos)
     if not d.part then return -math.huge end
     local pos = d.part.Position
-    local wind, fieldRadius = getWindField(d)
+    local wind = getStormWind(d.storm)
     local dist = (playerPos - pos).Magnitude
     local bias = cfg.WindPriority / 100
     local score = wind * bias * NAV_W_WIND - dist * (1 - bias) * NAV_W_DIST
-    local orbit = fieldRadius - cfg.SafeRadius
-    if orbit > 0 then score = score - orbit * NAV_W_FIELD end
     if navBlocked(playerPos, pos) then score = score - NAV_W_BLOCK end
     return score
-end
-
-local function passesFilters(d, playerPos)
-    if cfg.Blacklist[d.name] then return false end
-    if cfg.MinWindFilter > 0 and getStormWind(d.storm) < cfg.MinWindFilter then return false end
-    if cfg.MaxDistFilter > 0 and (playerPos - d.part.Position).Magnitude > cfg.MaxDistFilter then
-        return false
-    end
-    return true
 end
 
 local function pickTarget(playerPos)
@@ -808,10 +626,7 @@ local function pickTarget(playerPos)
     local cur = nil
     if _curTargetName then
         for _, d in ipairs(tornadoList) do
-            if d.name == _curTargetName and d.part and d.part.Parent and passesFilters(d, playerPos) then
-                cur = d
-                break
-            end
+            if d.name == _curTargetName and d.part and d.part.Parent then cur = d; break end
         end
     end
     if cur and (now - _lastRetarget) < cfg.RetargetInterval then
@@ -821,7 +636,7 @@ local function pickTarget(playerPos)
 
     local best, bestScore = nil, nil
     for _, d in ipairs(tornadoList) do
-        if d.part and d.part.Parent and passesFilters(d, playerPos) then
+        if d.part and d.part.Parent then
             local pos = d.part.Position
             local score
             if cfg.TargetMode == "strongest" then
@@ -849,8 +664,6 @@ end
 local function tweenTo(target, onDone, timeout, tight)
     if farmTweenLock then cancelFarmTween() end
     farmTweenLock = true
-    farmTweenGen  = farmTweenGen + 1
-    local myGen   = farmTweenGen
     setGravity(10)
 
     local char = LocalPlayer.Character
@@ -862,7 +675,7 @@ local function tweenTo(target, onDone, timeout, tight)
     local lastProg  = tick()
     local lastPos   = hrp.Position
     task.spawn(function()
-        while farmTweenLock and myGen == farmTweenGen do
+        while farmTweenLock do
             if tick() - startTime > tmax then cancelFarmTween(); break end
 
             local c  = LocalPlayer.Character
@@ -939,12 +752,6 @@ local function resolveProbePart(probe)
     return part
 end
 
-local function resolveCollectPart(probe)
-    local prompt = probe:FindFirstChild("PromptPart")
-    if prompt and prompt:IsA("BasePart") then return prompt end
-    return resolveProbePart(probe)
-end
-
 local function isMineName(name)
     return (name == myUserId) or (myUserId ~= "0" and name:find(myUserId, 1, true) ~= nil)
 end
@@ -978,7 +785,7 @@ local function getProbesSorted()
 
     local list = {}
     for _, probe in ipairs(collectMyProbes(pfold)) do
-        local part = resolveCollectPart(probe)
+        local part = resolveProbePart(probe)
         if part and part.Parent then
             local pos = part.Position
             list[#list + 1] = {
@@ -1018,20 +825,6 @@ local function updateHud()
     hudLabel.Text    = string.format("AutoFarm | %s | mode: %s | %s | %s",
         _hudActivity, cfg.TargetMode, tgt, dist)
     hudLabel.Visible = true
-end
-
-local function updateStats()
-    if not cfg.ShowStats then statsLabel.Visible = false; return end
-    local cam = workspace.CurrentCamera
-    if not cam then statsLabel.Visible = false; return end
-    local elapsed = tick() - stats.startTime
-    local rate    = elapsed > 0 and (stats.collected / (elapsed / 3600)) or 0
-    local mins    = math.floor(elapsed / 60)
-    local secs    = math.floor(elapsed % 60)
-    statsLabel.Position = Vector2.new(cam.ViewportSize.X / 2, 80)
-    statsLabel.Text     = string.format("placed: %d | collected: %d | %02d:%02d | %.0f/h",
-        stats.placed, stats.collected, mins, secs, rate)
-    statsLabel.Visible  = true
 end
 
 local COMPASS_RADIUS = 120
@@ -1096,140 +889,6 @@ local function updateCompass()
     compassText.Visible  = true
 end
 
-local espPool   = {}
-local espActive = { tornado = {}, probe = {} }
-
-local function getEspEntry(key)
-    local e = espPool[key]
-    if e then return e end
-    e = {}
-    local box = Drawing.new("Square")
-    box.Filled = false
-    box.Thickness = 1
-    box.Transparency = 1
-    box.Visible = false
-    e.box = box
-    local label = Drawing.new("Text")
-    label.Center = true
-    label.Outline = true
-    label.Font = 2
-    label.Size = 13
-    label.Transparency = 1
-    label.Visible = false
-    e.label = label
-    espPool[key] = e
-    return e
-end
-
-local function hideEspEntry(e)
-    if not e then return end
-    if e.box then e.box.Visible = false end
-    if e.label then e.label.Visible = false end
-end
-
-local function removeEspEntry(key)
-    local e = espPool[key]
-    if not e then return end
-    if e.box then e.box:Remove() end
-    if e.label then e.label:Remove() end
-    espPool[key] = nil
-end
-
-local function cleanupEsp(bucket, seen)
-    for key in pairs(bucket) do
-        if not seen[key] then
-            removeEspEntry(key)
-            bucket[key] = nil
-        end
-    end
-end
-
-local function updateTornadoEsp()
-    if not cfg.TornadoESP or type(WorldToScreen) ~= "function" then
-        for key in pairs(espActive.tornado) do hideEspEntry(espPool[key]) end
-        return
-    end
-    local char  = LocalPlayer.Character
-    local hrp   = char and char:FindFirstChild("HumanoidRootPart")
-    local myPos = hrp and hrp.Position or nil
-    local seen = {}
-    for _, d in ipairs(tornadoList) do
-        local part = d.part
-        if part and part.Parent then
-            local key = part.Address
-            seen[key] = true
-            espActive.tornado[key] = true
-            local entry = getEspEntry(key)
-            local pos = part.Position
-            local scr, on = WorldToScreen(pos)
-            if scr and on then
-                local sz = part.Size
-                local topScr = WorldToScreen(pos + Vector3.new(0, sz.Y / 2, 0))
-                local botScr = WorldToScreen(pos - Vector3.new(0, sz.Y / 2, 0))
-                local h = (topScr and botScr) and math.max(math.abs(botScr.Y - topScr.Y), 20) or 120
-                local w = math.max(h * 0.5, 20)
-                entry.box.Size = Vector2.new(w, h)
-                entry.box.Position = Vector2.new(scr.X - w / 2, scr.Y - h / 2)
-                entry.box.Color = cfg.TornadoESPColor
-                entry.box.Visible = true
-                local wind = getStormWind(d.storm)
-                local dist = myPos and (myPos - pos).Magnitude or 0
-                entry.label.Text = string.format("%s | %.0f mph | %.0fm", d.name, wind, dist)
-                entry.label.Position = Vector2.new(scr.X, scr.Y - h / 2 - 14)
-                entry.label.Color = cfg.TornadoESPColor
-                entry.label.Visible = true
-            else
-                hideEspEntry(entry)
-            end
-        end
-    end
-    cleanupEsp(espActive.tornado, seen)
-end
-
-local function updateProbeEsp()
-    if not cfg.ProbeESP or type(WorldToScreen) ~= "function" then
-        for key in pairs(espActive.probe) do hideEspEntry(espPool[key]) end
-        return
-    end
-    local pr    = workspace:FindFirstChild("player_related")
-    local pfold = pr and pr:FindFirstChild("probes")
-    if not pfold then
-        cleanupEsp(espActive.probe, {})
-        return
-    end
-    local char  = LocalPlayer.Character
-    local hrp   = char and char:FindFirstChild("HumanoidRootPart")
-    local myPos = hrp and hrp.Position or nil
-    local seen = {}
-    for _, probe in ipairs(collectMyProbes(pfold)) do
-        local part = resolveProbePart(probe)
-        if part and part.Parent then
-            local key = part.Address
-            seen[key] = true
-            espActive.probe[key] = true
-            local entry = getEspEntry(key)
-            local pos = part.Position
-            local scr, on = WorldToScreen(pos)
-            if scr and on then
-                local dist = myPos and (myPos - pos).Magnitude or 0
-                local scale = math.max(math.min(1200 / math.max(dist, 1), 2), 0.3)
-                local bs = math.floor(40 * scale)
-                entry.box.Size = Vector2.new(bs, bs)
-                entry.box.Position = Vector2.new(scr.X - bs / 2, scr.Y - bs / 2)
-                entry.box.Color = cfg.ProbeESPColor
-                entry.box.Visible = true
-                entry.label.Text = string.format("Probe | %.0fm", dist)
-                entry.label.Position = Vector2.new(scr.X, scr.Y - bs / 2 - 13)
-                entry.label.Color = cfg.ProbeESPColor
-                entry.label.Visible = true
-            else
-                hideEspEntry(entry)
-            end
-        end
-    end
-    cleanupEsp(espActive.probe, seen)
-end
-
 local function startCollect()
     if collectActive then return end
     collectActive = true
@@ -1254,15 +913,13 @@ local function startCollect()
             if pick then
                 collectVisited[pick.name] = now
                 _hudActivity = "Collecting"
-                local arrived = false
-                tweenTo(pick.pos, function() arrived = true end, 12, true)
+                tweenTo(pick.pos, nil, 12, true)
                 while collectActive and farmTweenLock do task.wait(0.1) end
-                if collectActive and isrbxactive() and arrived then
+                if collectActive and isrbxactive() then
                     keypress(cfg.InteractKey)
                     local t0 = tick()
                     while collectActive and (tick() - t0) < cfg.CollectHold do task.wait(0.05) end
                     keyrelease(cfg.InteractKey)
-                    stats.collected = stats.collected + 1
                 end
                 task.wait(0.2)
             elseif anyUnblocked then
@@ -1323,8 +980,6 @@ local function placeProbes()
                 task.wait(0.4)
                 tries = tries + 1
             until (not cycleActive) or (myProbeCount() > before) or (tries >= 2)
-            local after = myProbeCount()
-            if after > before then stats.placed = stats.placed + (after - before) end
         end
     end
 end
@@ -1347,8 +1002,8 @@ local function frontSpot(td)
             dirX, dirZ = h.dirX, h.dirZ
         end
     end
-    local wind, fieldRadius = getWindField(td)
-    local dangerR = tornadoRadiusOf(td) + cfg.SafeRadius * (1 + wind / 80) * AVOID_MARGIN + windFieldNudge(fieldRadius)
+    local wind    = getStormWind(td.storm)
+    local dangerR = tornadoRadiusOf(td) + cfg.SafeRadius * (1 + wind / 80) * AVOID_MARGIN
     local dist    = math.max(cfg.FrontOffset, dangerR * 1.15)
     return Vector3.new(tp.X + dirX * dist, tp.Y, tp.Z + dirZ * dist)
 end
@@ -1374,18 +1029,6 @@ local function waitGrounded(timeout)
     end
 end
 
-local function waitForRespawn()
-    setGravity(196.2)
-    if farmTweenLock then cancelFarmTween() end
-    local t0 = tick()
-    while cycleActive and (tick() - t0) < 30 do
-        local _, rp = cycleChar()
-        if rp then return rp end
-        task.wait(0.3)
-    end
-    return nil
-end
-
 local function startCycle()
     if cycleActive then return end
     cycleActive  = true
@@ -1397,8 +1040,7 @@ local function startCycle()
         while cycleActive do
             local _, rp = cycleChar()
             if not rp then
-                _hudActivity = "Farm: waiting respawn"
-                waitForRespawn()
+                task.wait(0.2)
             else
                 local td = pickTarget(rp.Position)
                 local weak = td and td.part and getStormWind(td.storm) < cfg.WindThreshold
@@ -1558,64 +1200,7 @@ local function setCycle(state)
     end
 end
 
-local function applyConfigToUI()
-    UI.SetValue("farm_front", cfg.FrontOffset)
-    UI.SetValue("farm_height", cfg.HeightOffset)
-    UI.SetValue("farm_speed", cfg.Speed)
-    UI.SetValue("farm_safe", cfg.SafeRadius)
-    UI.SetValue("smart_wind", cfg.WindPriority)
-    UI.SetValue("show_hud", cfg.ShowHUD)
-    UI.SetValue("show_compass", cfg.ShowCompass)
-    UI.SetValue("show_stats", cfg.ShowStats)
-    UI.SetValue("tornado_esp", cfg.TornadoESP)
-    UI.SetValue("probe_esp", cfg.ProbeESP)
-    UI.SetValue("probe_count", cfg.ProbeCount)
-    UI.SetValue("collect_cd", cfg.CollectCooldown)
-    UI.SetValue("collect_hold", cfg.CollectHold)
-    UI.SetValue("place_hold", cfg.PlaceHold)
-    UI.SetValue("wind_thresh", cfg.WindThreshold)
-    UI.SetValue("filter_min_wind", cfg.MinWindFilter)
-    UI.SetValue("filter_max_dist", cfg.MaxDistFilter)
-    UI.SetValue("anti_afk", cfg.AntiAFK)
-end
-
-local function fileExists(f)
-    local ok, res = pcall(isfile, f)
-    return ok and res
-end
-
-local function profileFile(n)
-    return "autofarm_cfg_" .. n .. ".json"
-end
-
-local function saveProfile(n)
-    saveConfig(profileFile(n))
-end
-
-local function loadProfile(n)
-    local f = profileFile(n)
-    if not fileExists(f) then notify("Profile " .. n .. " is empty", "", 3); return end
-    loadConfig(f)
-    applyConfigToUI()
-    notify("Profile " .. n .. " loaded", "", 3)
-end
-
-local function cycleTarget(step)
-    cfg.TargetMode = "manual"
-    if #tornadoList == 0 then scanTornadoes() end
-    if #tornadoList == 0 then notify("No tornadoes found", "", 2); return end
-    local idx = 0
-    for i, d in ipairs(tornadoList) do
-        if d.name == cfg.Selected then idx = i; break end
-    end
-    idx = (idx - 1 + step) % #tornadoList + 1
-    cfg.Selected   = tornadoList[idx].name
-    _curTargetName = nil
-    notify("Target: " .. cfg.Selected, idx .. " / " .. #tornadoList, 3)
-end
-
 loadConfig()
-scanTornadoes()
 
 UI.AddTab("Auto Farm", function(tab)
     local TS = tab:Section("Target", "Left")
@@ -1647,11 +1232,6 @@ UI.AddTab("Auto Farm", function(tab)
     TS:Button("Mode: Manual",   function() cfg.TargetMode = "manual"; notify("Mode: Manual", "", 2) end)
     TS:Spacing()
 
-    TS:Text("Manual select (cycles live tornadoes):")
-    TS:Button("< Prev Tornado", function() cycleTarget(-1) end)
-    TS:Button("Next Tornado >", function() cycleTarget(1) end)
-    TS:Spacing()
-
     for _, d in ipairs(tornadoList) do
         local label = (cfg.Selected == d.name) and (">> " .. d.name .. " <<") or d.name
         TS:Button(label, function()
@@ -1680,76 +1260,6 @@ UI.AddTab("Auto Farm", function(tab)
     end)
     CS:Spacing()
     CS:Button("Save Config", function() saveConfig() end)
-
-    local ES = tab:Section("ESP", "Left")
-    ES:Toggle("tornado_esp", "Tornado ESP", cfg.TornadoESP, function(state)
-        cfg.TornadoESP = state
-        if not state then
-            for key in pairs(espActive.tornado) do hideEspEntry(espPool[key]) end
-        end
-    end)
-    ES:Toggle("probe_esp", "Probe ESP", cfg.ProbeESP, function(state)
-        cfg.ProbeESP = state
-        if not state then
-            for key in pairs(espActive.probe) do hideEspEntry(espPool[key]) end
-        end
-    end)
-    ES:Spacing()
-    ES:ColorPicker("TornadoESPColor", cfg.TornadoESPColor.R, cfg.TornadoESPColor.G, cfg.TornadoESPColor.B, 1, function(c)
-        cfg.TornadoESPColor = c
-    end)
-    ES:ColorPicker("ProbeESPColor", cfg.ProbeESPColor.R, cfg.ProbeESPColor.G, cfg.ProbeESPColor.B, 1, function(c)
-        cfg.ProbeESPColor = c
-    end)
-
-    local FS = tab:Section("Filters", "Left")
-    FS:SliderInt("filter_min_wind", "Min Wind (auto modes)", 0, 300, cfg.MinWindFilter, function(v)
-        cfg.MinWindFilter = v
-    end)
-    FS:SliderInt("filter_max_dist", "Max Distance (0 = off)", 0, 20000, cfg.MaxDistFilter, function(v)
-        cfg.MaxDistFilter = v
-    end)
-    FS:Spacing()
-    FS:Button("Blacklist Current Target", function()
-        if cfg.Selected then
-            cfg.Blacklist[cfg.Selected] = true
-            _curTargetName = nil
-            notify("Blacklisted: " .. cfg.Selected, "", 3)
-        else
-            notify("No target selected", "", 2)
-        end
-    end)
-    FS:Button("Clear Blacklist", function()
-        cfg.Blacklist = {}
-        notify("Blacklist cleared", "", 2)
-    end)
-
-    local SS = tab:Section("Session", "Right")
-    SS:Toggle("show_stats", "Stats HUD", cfg.ShowStats, function(state)
-        cfg.ShowStats = state
-        if not state then statsLabel.Visible = false end
-    end)
-    SS:Button("Reset Stats", function()
-        stats.placed    = 0
-        stats.collected = 0
-        stats.startTime = tick()
-        notify("Stats reset", "", 2)
-    end)
-    SS:Spacing()
-    SS:Toggle("anti_afk", "Anti-AFK (click pulse)", cfg.AntiAFK, function(state)
-        cfg.AntiAFK = state
-        notify(state and "Anti-AFK ON" or "Anti-AFK OFF", "", 2)
-    end)
-    antiAfkKb = SS:Keybind("anti_afk_kb", cfg.AntiAFKKeyVK, "toggle")
-    antiAfkKb:AddToHotkey("Anti-AFK", "anti_afk")
-    SS:Spacing()
-    SS:Text("Config Profiles")
-    SS:Button("Save Profile 1", function() saveProfile(1) end)
-    SS:Button("Load Profile 1", function() loadProfile(1) end)
-    SS:Button("Save Profile 2", function() saveProfile(2) end)
-    SS:Button("Load Profile 2", function() loadProfile(2) end)
-    SS:Button("Save Profile 3", function() saveProfile(3) end)
-    SS:Button("Load Profile 3", function() loadProfile(3) end)
 
     local PS = tab:Section("Probes", "Right")
     PS:Text("Press a probe key to fly to it (press again to cancel)")
@@ -1880,35 +1390,12 @@ RunService.RenderStepped:Connect(function()
         UI.SetValue("auto_collect", false)
     end
 
-    if antiAfkKb then
-        local kbState = antiAfkKb:IsEnabled()
-        if kbState ~= _antiAfkKbPrev then
-            _antiAfkKbPrev = kbState
-            cfg.AntiAFK = kbState
-            UI.SetValue("anti_afk", kbState)
-            notify(kbState and "Anti-AFK ON" or "Anti-AFK OFF", "", 2)
-        end
-    end
-
     updateHud()
 
     local nowC = tick()
     if nowC - lastCompass >= 0.05 then
         lastCompass = nowC
         updateCompass()
-    end
-
-    local nowE = tick()
-    if nowE - lastEsp >= 1 / 30 then
-        lastEsp = nowE
-        updateTornadoEsp()
-        updateProbeEsp()
-    end
-
-    local nowS = tick()
-    if nowS - lastStats >= 1 then
-        lastStats = nowS
-        updateStats()
     end
 end)
 
@@ -1920,20 +1407,6 @@ task.spawn(function()
             scanTornadoes()
             if #tornadoList ~= prev then
                 notify("Tornadoes updated: " .. #tornadoList, "", 3)
-            end
-        end
-    end
-end)
-
-task.spawn(function()
-    while true do
-        task.wait(60)
-        if cfg.AntiAFK and not cycleActive and not collectActive and not farmTweenLock then
-            for _ = 1, 2 do
-                mouse1press()
-                task.wait(0.05)
-                mouse1release()
-                task.wait(0.1)
             end
         end
     end
