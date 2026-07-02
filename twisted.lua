@@ -7,7 +7,7 @@ if _G.StormTrackerCleanup then _G.StormTrackerCleanup() end
 
 local findProbePart, scanProbes, updateProbeEsp
 
-local O = Http:JSONDecode(game:HttpGet("https://imtheo.lol/Offsets/Offsets.json")).Offsets
+local O = Http:JSONDecode(game:HttpGet("https://offsets.imtheo.lol/version-5cf2272675e145f5/offsets.json")).Offsets
 if not O then print("[Storm Tracker] offsets failed to load"); return end
 
 local myUserId = "0"
