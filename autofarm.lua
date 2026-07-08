@@ -3,7 +3,7 @@ local Players     = game:GetService("Players")
 local Http        = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 
-local O = Http:JSONDecode(game:HttpGet("https://offsets.imtheo.lol/version-5cf2272675e145f5/offsets.json")).Offsets
+local O = Http:JSONDecode(game:HttpGet("https://offsets.imtheo.lol/offsets.json")).Offsets
 if not O then print("[AutoFarm] offsets failed to load"); return end
 
 local myUserId = "0"
