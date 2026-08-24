@@ -1,115 +1,105 @@
 local RunService = game:GetService("RunService")
-local Players    = game:GetService("Players")
-local Http       = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local Http = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 
-if _G.StormTrackerCleanup then _G.StormTrackerCleanup() end
+if _G.StormTrackerCleanup then
+    _G.StormTrackerCleanup()
+end
 
 local findProbePart, scanProbes, updateProbeEsp
 
 local O = Http:JSONDecode(game:HttpGet("https://offsets.imtheo.lol/offsets.json")).Offsets
-if not O then print("[Storm Tracker] offsets failed to load"); return end
+if not O then
+    print("[Storm Tracker] offsets failed to load")
+    return
+end
 
-local myUserId = "0"
-pcall(function()
-    local base = getbase()
-    local dm = memory_read("uintptr_t", memory_read("uintptr_t", base + O.FakeDataModel.Pointer) + O.FakeDataModel.RealDataModel)
-    local function getChild(parent, name)
-        local ptr = memory_read("uintptr_t", parent + O.Instance.ChildrenStart)
-        if ptr == 0 then return nil end
-        local s, e = memory_read("uintptr_t", ptr), memory_read("uintptr_t", ptr + O.Instance.ChildrenEnd)
-        for i = 0, (e - s) / 8 - 1 do
-            local c = memory_read("uintptr_t", s + i * 8)
-            if memory_read("string", memory_read("uintptr_t", c + O.Instance.Name)) == name then return c end
-        end
-    end
-    local lp     = memory_read("uintptr_t", getChild(dm, "Players") + O.Player.LocalPlayer)
-    local userId = memory_read("uintptr_t", lp + O.Player.UserId)
-    myUserId = tostring(userId)
-end)
+local myUserId = tostring(LocalPlayer.UserId)
 print("[Storm Tracker] UserId:", myUserId)
 
-
 local cfg = {
-    TornadoESP      = { Visible = false },
-    ProbeESP        = { Visible = false },
-    CarFreeze       = { Enabled = false, Soft = false, KeyVK = 0x4B },
-    CharacterFreeze = { Enabled = false, KeyVK = 0x4C },
-    CarBoost        = { Enabled = false, Force = 50000, KeyVK = 0x05, LatDamp = 0.5 },
-    CarBrake        = { Enabled = false, Force = 5000,  KeyVK = 0x58 },
-    CharBoost       = { Enabled = false, Force = 30000, KeyVK = 0x47 },
+    TornadoESP = {Visible = false},
+    ProbeESP = {Visible = false},
+    CarFreeze = {Enabled = false, Soft = false, KeyVK = 0x4B},
+    CharacterFreeze = {Enabled = false, KeyVK = 0x4C},
+    CarBoost = {Enabled = false, Force = 50000, KeyVK = 0x05, LatDamp = 0.5},
+    CarBrake = {Enabled = false, Force = 5000, KeyVK = 0x58},
+    CharBoost = {Enabled = false, Force = 30000, KeyVK = 0x47},
     Tornado = {
-        ShowBox    = true,
-        ShowLine   = true,
+        ShowBox = true,
+        ShowLine = true,
         ShowCircle = true,
-        BoxColor    = Color3.new(1, 0, 0),
-        LineColor   = Color3.new(1, 1, 0),
+        BoxColor = Color3.new(1, 0, 0),
+        LineColor = Color3.new(1, 1, 0),
         CircleColor = Color3.new(0, 1, 1),
-        TextColor   = Color3.new(1, 0, 0),
+        TextColor = Color3.new(1, 0, 0)
     },
     Probe = {
-        BoxColor  = Color3.new(0, 1, 1),
-        TextColor = Color3.new(0, 1, 1),
+        BoxColor = Color3.new(0, 1, 1),
+        TextColor = Color3.new(0, 1, 1)
     },
     Tween = {
         Enabled = false,
-        Speed  = 120,
+        Speed = 120,
         Height = 0.5,
         Offset = 30,
-        KeyVK  = 0x54,
+        KeyVK = 0x54
     },
     MaxESPDist = 5000,
-    SpeedHUD   = { Visible = false },
+    SpeedHUD = {Visible = false}
 }
 
-local espPool    = {}
-local activeKeys = { tornado = {}, probe = {} }
+local espPool = {}
+local activeKeys = {tornado = {}, probe = {}}
 
 local function getPoolEntry(key, withCircle, withLine)
-    if espPool[key] then return espPool[key] end
+    if espPool[key] then
+        return espPool[key]
+    end
     local entry = {}
 
-    local isProbe    = not withCircle and not withLine
-    local boxColor   = isProbe and cfg.Probe.BoxColor   or cfg.Tornado.BoxColor
-    local labelColor = isProbe and cfg.Probe.TextColor  or cfg.Tornado.TextColor
+    local isProbe = not withCircle and not withLine
+    local boxColor = isProbe and cfg.Probe.BoxColor or cfg.Tornado.BoxColor
+    local labelColor = isProbe and cfg.Probe.TextColor or cfg.Tornado.TextColor
 
     local box = Drawing.new("Square")
-    box.Filled       = false
-    box.Thickness    = 1
+    box.Filled = false
+    box.Thickness = 1
     box.Transparency = 1
-    box.Color        = boxColor
-    box.Visible      = false
-    entry.box        = box
+    box.Color = boxColor
+    box.Visible = false
+    entry.box = box
 
     local label = Drawing.new("Text")
-    label.Center       = true
-    label.Outline      = true
-    label.Font         = 2
-    label.Size         = 14
+    label.Center = true
+    label.Outline = true
+    label.Font = 2
+    label.Size = 14
     label.Transparency = 1
-    label.Color        = labelColor
-    label.Visible      = false
-    entry.label        = label
+    label.Color = labelColor
+    label.Visible = false
+    entry.label = label
 
     if withCircle then
         local circle = Drawing.new("Circle")
-        circle.Radius       = 10
-        circle.Thickness    = 2
-        circle.NumSides     = 32
-        circle.Filled       = true
+        circle.Radius = 10
+        circle.Thickness = 2
+        circle.NumSides = 32
+        circle.Filled = true
         circle.Transparency = 1
-        circle.Color        = cfg.Tornado.CircleColor
-        circle.Visible      = false
-        entry.circle        = circle
+        circle.Color = cfg.Tornado.CircleColor
+        circle.Visible = false
+        entry.circle = circle
     end
 
     if withLine then
         local line = Drawing.new("Line")
-        line.Thickness    = 2
+        line.Thickness = 2
         line.Transparency = 1
-        line.Color        = cfg.Tornado.LineColor
-        line.Visible      = false
-        entry.line        = line
+        line.Color = cfg.Tornado.LineColor
+        line.Visible = false
+        entry.line = line
     end
 
     espPool[key] = entry
@@ -117,21 +107,41 @@ local function getPoolEntry(key, withCircle, withLine)
 end
 
 local function hideEntry(entry)
-    if not entry then return end
-    if entry.box    then entry.box.Visible    = false end
-    if entry.label  then entry.label.Visible  = false end
-    if entry.circle then entry.circle.Visible = false end
-    if entry.line   then entry.line.Visible   = false end
+    if not entry then
+        return
+    end
+    if entry.box then
+        entry.box.Visible = false
+    end
+    if entry.label then
+        entry.label.Visible = false
+    end
+    if entry.circle then
+        entry.circle.Visible = false
+    end
+    if entry.line then
+        entry.line.Visible = false
+    end
 end
 
 local function removeEntry(key)
     local entry = espPool[key]
-    if not entry then return end
+    if not entry then
+        return
+    end
     hideEntry(entry)
-    if entry.box    then entry.box:Remove()    end
-    if entry.label  then entry.label:Remove()  end
-    if entry.circle then entry.circle:Remove() end
-    if entry.line   then entry.line:Remove()   end
+    if entry.box then
+        entry.box:Remove()
+    end
+    if entry.label then
+        entry.label:Remove()
+    end
+    if entry.circle then
+        entry.circle:Remove()
+    end
+    if entry.line then
+        entry.line:Remove()
+    end
     espPool[key] = nil
 end
 
@@ -145,23 +155,37 @@ local function cleanupBucket(bucket, seen)
 end
 
 local function toScreen(pos)
-    if not pos then return nil, false end
+    if not pos then
+        return nil, false
+    end
     if type(WorldToScreen) == "function" then
         local scr, on = WorldToScreen(pos)
-        if scr then return scr, on end
+        if scr then
+            return scr, on
+        end
     end
     return nil, false
 end
 
-local WIND_ATTRS = { "WindSpeed", "windspeed", "wind_speed", "Speed", "speed", "Intensity", "intensity", "EF", "EFRating" }
-local prevPos    = {}
-local prevTime   = {}
-local moveVec    = {}
-local speedBufs  = {}
-local sizeCache  = {}
+local WIND_ATTRS = {
+    "WindSpeed",
+    "windspeed",
+    "wind_speed",
+    "Speed",
+    "speed",
+    "Intensity",
+    "intensity",
+    "EF",
+    "EFRating"
+}
+local prevPos = {}
+local prevTime = {}
+local moveVec = {}
+local speedBufs = {}
+local sizeCache = {}
 
 local function readWindAttr(storm)
-    local targets = { storm, storm:FindFirstChild("rotation") }
+    local targets = {storm, storm:FindFirstChild("rotation")}
     for _, obj in ipairs(targets) do
         if obj and obj.GetAttribute then
             for _, a in ipairs(WIND_ATTRS) do
@@ -177,58 +201,82 @@ end
 
 local function sampleSpeed(key, pos)
     local now = tick()
-    if not speedBufs[key] then speedBufs[key] = { s = {}, lp = pos, lt = now }; return end
-    local b  = speedBufs[key]
+    if not speedBufs[key] then
+        speedBufs[key] = {s = {}, lp = pos, lt = now}
+        return
+    end
+    local b = speedBufs[key]
     local dt = now - b.lt
-    if dt < 0.5 then return end
+    if dt < 0.5 then
+        return
+    end
     local dx, dz = pos.X - b.lp.X, pos.Z - b.lp.Z
-    local mph    = math.sqrt(dx * dx + dz * dz) / dt * 0.627
-    local s      = b.s
-    s[#s + 1]    = mph
-    if #s > 10 then table.remove(s, 1) end
+    local mph = math.sqrt(dx * dx + dz * dz) / dt * 0.627
+    local s = b.s
+    s[#s + 1] = mph
+    if #s > 10 then
+        table.remove(s, 1)
+    end
     b.lp = pos
     b.lt = now
 end
 
 local function getSpeed(key)
     local b = speedBufs[key]
-    if not b or #b.s == 0 then return 0 end
+    if not b or #b.s == 0 then
+        return 0
+    end
     local tw, ws = 0, 0
-    for i, v in ipairs(b.s) do ws = ws + v * i; tw = tw + i end
+    for i, v in ipairs(b.s) do
+        ws = ws + v * i
+        tw = tw + i
+    end
     return ws / tw
 end
 
 local function getDir(key, pos)
     local now = tick()
-    if not prevPos[key] then prevPos[key] = pos; prevTime[key] = now; return nil end
+    if not prevPos[key] then
+        prevPos[key] = pos
+        prevTime[key] = now
+        return nil
+    end
     local mov = pos - prevPos[key]
-    local dt  = now - prevTime[key]
-    prevPos[key]  = pos
+    local dt = now - prevTime[key]
+    prevPos[key] = pos
     prevTime[key] = now
     local mag = mov.Magnitude
     if dt > 0 and mag > 0.01 then
-        local nd  = mov / mag
+        local nd = mov / mag
         local old = moveVec[key]
         moveVec[key] = old and (old * 0.3 + nd * 0.7).Unit or nd
     end
     return moveVec[key]
 end
 
-local tornadoData  = {}
-local probeData    = {}
-local espFrame     = 0
-local lastScan     = 0
-local lastEsp      = 0
+local tornadoData = {}
+local probeData = {}
+local espFrame = 0
+local lastScan = 0
+local lastEsp = 0
 
 function findProbePart(probe)
-    if not probe or not probe:IsA("Model") then return nil end
+    if not probe or not probe:IsA("Model") then
+        return nil
+    end
     local mesh = probe:FindFirstChild("mesh")
-    if not mesh then return nil end
+    if not mesh then
+        return nil
+    end
     local fallbackMesh, fallbackBase = nil, nil
     for _, child in ipairs(mesh:GetChildren()) do
         if child:IsA("MeshPart") then
-            if child.Name:find("Tower Probe_Cylinder") then return child end
-            if not fallbackMesh then fallbackMesh = child end
+            if child.Name:find("Tower Probe_Cylinder") then
+                return child
+            end
+            if not fallbackMesh then
+                fallbackMesh = child
+            end
         elseif child:IsA("BasePart") and not fallbackBase then
             fallbackBase = child
         end
@@ -237,24 +285,28 @@ function findProbePart(probe)
 end
 
 local function clearTornadoKey(key)
-    prevPos[key]   = nil
-    prevTime[key]  = nil
-    moveVec[key]   = nil
+    prevPos[key] = nil
+    prevTime[key] = nil
+    moveVec[key] = nil
     speedBufs[key] = nil
     sizeCache[key] = nil
     removeEntry(key)
     activeKeys.tornado[key] = nil
-    tornadoData[key]        = nil
+    tornadoData[key] = nil
 end
 
 local function scanTornadoes()
-    local sr     = workspace:FindFirstChild("storm_related")
+    local sr = workspace:FindFirstChild("storm_related")
     local storms = sr and sr:FindFirstChild("storms")
 
     if not storms then
         local dead = {}
-        for key in pairs(tornadoData) do dead[#dead + 1] = key end
-        for _, key in ipairs(dead) do clearTornadoKey(key) end
+        for key in pairs(tornadoData) do
+            dead[#dead + 1] = key
+        end
+        for _, key in ipairs(dead) do
+            clearTornadoKey(key)
+        end
         return
     end
 
@@ -262,15 +314,15 @@ local function scanTornadoes()
     for _, storm in ipairs(storms:GetChildren()) do
         if storm and storm:IsA("Model") then
             local rot = storm:FindFirstChild("rotation")
-            local ts  = rot and rot:FindFirstChild("tornado_scan")
+            local ts = rot and rot:FindFirstChild("tornado_scan")
             if ts and ts:IsA("BasePart") then
                 local addr = ts.Address
                 foundParts[addr] = true
                 if not tornadoData[addr] then
                     print("[ScanTornadoes] New tornado: " .. storm.Name)
-                    tornadoData[addr] = { part = ts, stormModel = storm }
+                    tornadoData[addr] = {part = ts, stormModel = storm}
                 else
-                    tornadoData[addr].part       = ts
+                    tornadoData[addr].part = ts
                     tornadoData[addr].stormModel = storm
                 end
             end
@@ -283,19 +335,22 @@ local function scanTornadoes()
             dead[#dead + 1] = key
         end
     end
-    for _, key in ipairs(dead) do clearTornadoKey(key) end
+    for _, key in ipairs(dead) do
+        clearTornadoKey(key)
+    end
 end
 
 function scanProbes()
-    local pr    = workspace:FindFirstChild("player_related")
+    local pr = workspace:FindFirstChild("player_related")
     local pfold = pr and pr:FindFirstChild("probes")
-    if not pfold then return end
+    if not pfold then
+        return
+    end
 
     local liveSet = {}
     for _, probe in ipairs(pfold:GetChildren()) do
         local name = probe.Name
-        local isMine = (name == myUserId)
-            or (myUserId ~= "0" and name:find(myUserId, 1, true))
+        local isMine = (name == myUserId) or (myUserId ~= "0" and name:find(myUserId, 1, true))
         if isMine and probe:IsA("Model") then
             liveSet[probe.Address] = probe
         end
@@ -310,7 +365,7 @@ function scanProbes()
     for _, addr in ipairs(dead) do
         removeEntry(addr)
         activeKeys.probe[addr] = nil
-        probeData[addr]        = nil
+        probeData[addr] = nil
     end
 
     for addr, probe in pairs(liveSet) do
@@ -320,28 +375,34 @@ function scanProbes()
         else
             local part = findProbePart(probe)
             if part then
-                probeData[addr] = { part = probe, realPart = part }
+                probeData[addr] = {part = probe, realPart = part}
                 print("[ProbeESP] Added: " .. probe.Name)
             end
         end
     end
 end
 
-local math_floor  = math.floor
-local math_abs    = math.abs
-local math_max    = math.max
-local math_clamp  = math.clamp
-local table_clear = table.clear or function(t) for k in pairs(t) do t[k] = nil end end
+local math_floor = math.floor
+local math_abs = math.abs
+local math_max = math.max
+local math_clamp = math.clamp
+local table_clear = table.clear or function(t)
+        for k in pairs(t) do
+            t[k] = nil
+        end
+    end
 
 local function updateTornadoEsp(playerPos)
     if not cfg.TornadoESP.Visible then
-        for key in pairs(activeKeys.tornado) do hideEntry(espPool[key]) end
+        for key in pairs(activeKeys.tornado) do
+            hideEntry(espPool[key])
+        end
         table_clear(activeKeys.tornado)
         return
     end
 
-    local seen    = {}
-    local tc      = cfg.Tornado
+    local seen = {}
+    local tc = cfg.Tornado
     local maxDist = cfg.MaxESPDist
 
     local function step(key, data)
@@ -365,13 +426,19 @@ local function updateTornadoEsp(playerPos)
             return
         end
 
-        seen[key]               = true
+        seen[key] = true
         activeKeys.tornado[key] = true
         local entry = getPoolEntry(key, true, true)
 
-        if entry.box   then entry.box.Color   = tc.BoxColor  end
-        if entry.label then entry.label.Color = tc.TextColor end
-        if entry.line  then entry.line.Color  = tc.LineColor end
+        if entry.box then
+            entry.box.Color = tc.BoxColor
+        end
+        if entry.label then
+            entry.label.Color = tc.TextColor
+        end
+        if entry.line then
+            entry.line.Color = tc.LineColor
+        end
 
         if tc.ShowBox and (espFrame % 2 == 0) then
             if not sizeCache[key] then
@@ -384,53 +451,63 @@ local function updateTornadoEsp(playerPos)
             local rSc, rOn = toScreen(pos + Vector3.new(sz.X / 2, 0, 0))
             local h, w, boxY
             if tSc and bSc and lSc and rSc and tOn and bOn and lOn and rOn then
-                h    = math_max(math_abs(tSc.Y - bSc.Y), 20)
-                w    = math_max(math_abs(rSc.X - lSc.X), 20)
+                h = math_max(math_abs(tSc.Y - bSc.Y), 20)
+                w = math_max(math_abs(rSc.X - lSc.X), 20)
                 boxY = tSc.Y
             else
-                h = 120; w = 60; boxY = scr.Y - 60
+                h = 120
+                w = 60
+                boxY = scr.Y - 60
             end
-            entry.box.Size     = Vector2.new(w, h)
+            entry.box.Size = Vector2.new(w, h)
             entry.box.Position = Vector2.new(scr.X - w / 2, boxY)
-            entry.box.Color    = tc.BoxColor
-            entry.box.Visible  = true
+            entry.box.Color = tc.BoxColor
+            entry.box.Visible = true
         elseif not tc.ShowBox then
             entry.box.Visible = false
         end
 
         local wind = readWindAttr(data.stormModel) or getSpeed(key)
-        entry.label.Text     = string.format("TORNADO [%dm] | %.1f mph", math_floor(dist), wind)
+        entry.label.Text = string.format("TORNADO [%dm] | %.1f mph", math_floor(dist), wind)
         entry.label.Position = Vector2.new(scr.X, scr.Y - 46)
-        entry.label.Color    = tc.TextColor
-        entry.label.Visible  = true
+        entry.label.Color = tc.TextColor
+        entry.label.Visible = true
 
         local dir = getDir(key, pos)
         if dir and (tc.ShowLine or tc.ShowCircle) then
-            local tgt        = pos + Vector3.new(dir.X * 1000, dir.Y * 500, dir.Z * 1000)
+            local tgt = pos + Vector3.new(dir.X * 1000, dir.Y * 500, dir.Z * 1000)
             local tScr, tOn2 = toScreen(tgt)
             if tScr and tOn2 then
                 if tc.ShowLine and entry.line then
-                    entry.line.From    = Vector2.new(scr.X, scr.Y)
-                    entry.line.To      = Vector2.new(tScr.X, tScr.Y)
-                    entry.line.Color   = tc.LineColor
+                    entry.line.From = Vector2.new(scr.X, scr.Y)
+                    entry.line.To = Vector2.new(tScr.X, tScr.Y)
+                    entry.line.Color = tc.LineColor
                     entry.line.Visible = true
                 elseif entry.line then
                     entry.line.Visible = false
                 end
                 if tc.ShowCircle and entry.circle then
                     entry.circle.Position = Vector2.new(tScr.X, tScr.Y)
-                    entry.circle.Color    = tc.CircleColor
-                    entry.circle.Visible  = true
+                    entry.circle.Color = tc.CircleColor
+                    entry.circle.Visible = true
                 elseif entry.circle then
                     entry.circle.Visible = false
                 end
             else
-                if entry.line   then entry.line.Visible   = false end
-                if entry.circle then entry.circle.Visible = false end
+                if entry.line then
+                    entry.line.Visible = false
+                end
+                if entry.circle then
+                    entry.circle.Visible = false
+                end
             end
         else
-            if entry.line   then entry.line.Visible   = false end
-            if entry.circle then entry.circle.Visible = false end
+            if entry.line then
+                entry.line.Visible = false
+            end
+            if entry.circle then
+                entry.circle.Visible = false
+            end
         end
     end
 
@@ -443,13 +520,15 @@ end
 
 function updateProbeEsp(playerPos)
     if not cfg.ProbeESP.Visible then
-        for key in pairs(activeKeys.probe) do hideEntry(espPool[key]) end
+        for key in pairs(activeKeys.probe) do
+            hideEntry(espPool[key])
+        end
         table_clear(activeKeys.probe)
         return
     end
 
-    local seen    = {}
-    local pc      = cfg.Probe
+    local seen = {}
+    local pc = cfg.Probe
     local maxDist = cfg.MaxESPDist
 
     local function step(key, data)
@@ -457,10 +536,15 @@ function updateProbeEsp(playerPos)
         if not realPart or not realPart:IsDescendantOf(workspace) then
             if data.part and data.part:IsDescendantOf(workspace) then
                 realPart = findProbePart(data.part)
-                if realPart then data.realPart = realPart
-                else hideEntry(espPool[key]); return end
+                if realPart then
+                    data.realPart = realPart
+                else
+                    hideEntry(espPool[key])
+                    return
+                end
             else
-                hideEntry(espPool[key]); return
+                hideEntry(espPool[key])
+                return
             end
         end
 
@@ -477,25 +561,29 @@ function updateProbeEsp(playerPos)
             return
         end
 
-        seen[key]             = true
+        seen[key] = true
         activeKeys.probe[key] = true
         local entry = getPoolEntry(key, false, false)
 
-        if entry.box   then entry.box.Color   = pc.BoxColor  end
-        if entry.label then entry.label.Color = pc.TextColor end
+        if entry.box then
+            entry.box.Color = pc.BoxColor
+        end
+        if entry.label then
+            entry.label.Color = pc.TextColor
+        end
 
-        local scale   = math_clamp(1000 / dist, 0.3, 2)
+        local scale = math_clamp(1000 / dist, 0.3, 2)
         local boxSize = math_floor(50 * scale)
 
-        entry.box.Size     = Vector2.new(boxSize, boxSize)
+        entry.box.Size = Vector2.new(boxSize, boxSize)
         entry.box.Position = Vector2.new(scr.X - boxSize / 2, scr.Y - boxSize / 2)
-        entry.box.Color    = pc.BoxColor
-        entry.box.Visible  = true
+        entry.box.Color = pc.BoxColor
+        entry.box.Visible = true
 
-        entry.label.Text     = string.format("PROBE [%dm]", math_floor(dist))
+        entry.label.Text = string.format("PROBE [%dm]", math_floor(dist))
         entry.label.Position = Vector2.new(scr.X, scr.Y - boxSize / 2 - 15)
-        entry.label.Color    = pc.TextColor
-        entry.label.Visible  = true
+        entry.label.Color = pc.TextColor
+        entry.label.Visible = true
     end
 
     for key, data in pairs(probeData) do
@@ -510,10 +598,18 @@ local function syncTornadoColors()
     for key in pairs(tornadoData) do
         local e = espPool[key]
         if e then
-            if e.box    then e.box.Color    = tc.BoxColor    end
-            if e.line   then e.line.Color   = tc.LineColor   end
-            if e.circle then e.circle.Color = tc.CircleColor end
-            if e.label  then e.label.Color  = tc.TextColor   end
+            if e.box then
+                e.box.Color = tc.BoxColor
+            end
+            if e.line then
+                e.line.Color = tc.LineColor
+            end
+            if e.circle then
+                e.circle.Color = tc.CircleColor
+            end
+            if e.label then
+                e.label.Color = tc.TextColor
+            end
         end
     end
 end
@@ -523,21 +619,27 @@ local function syncProbeColors()
     for key in pairs(probeData) do
         local e = espPool[key]
         if e then
-            if e.box   then e.box.Color   = pc.BoxColor  end
-            if e.label then e.label.Color = pc.TextColor end
+            if e.box then
+                e.box.Color = pc.BoxColor
+            end
+            if e.label then
+                e.label.Color = pc.TextColor
+            end
         end
     end
 end
 
-local OFF_PRIMITIVE  = O.BasePart.Primitive
-local OFF_CF         = O.Primitive.Rotation
-local OFF_POS        = O.Primitive.Position - O.Primitive.Rotation
-local OFF_VEL        = O.Primitive.AssemblyLinearVelocity
-local OFF_ANG_VEL    = O.Primitive.AssemblyAngularVelocity
+local OFF_PRIMITIVE = O.BasePart.Primitive
+local OFF_CF = O.Primitive.Rotation
+local OFF_POS = O.Primitive.Position - O.Primitive.Rotation
+local OFF_VEL = O.Primitive.AssemblyLinearVelocity
+local OFF_ANG_VEL = O.Primitive.AssemblyAngularVelocity
 
 local function readPrim(part)
     local ok, ptr = pcall(memory_read, "uintptr_t", part.Address + OFF_PRIMITIVE)
-    if not ok or not ptr or ptr == 0 then return nil end
+    if not ok or not ptr or ptr == 0 then
+        return nil
+    end
     return ptr
 end
 
@@ -551,7 +653,7 @@ end
 
 local function writePos(prim, pos)
     local base = prim + OFF_CF + OFF_POS
-    memory_write("float", base,       pos.X)
+    memory_write("float", base, pos.X)
     memory_write("float", base + 0x4, pos.Y)
     memory_write("float", base + 0x8, pos.Z)
 end
@@ -559,168 +661,218 @@ end
 local function freezeZeroVel(prim)
     local vb = prim + OFF_VEL
     local ab = prim + OFF_ANG_VEL
-    memory_write("float", vb,       0)
+    memory_write("float", vb, 0)
     memory_write("float", vb + 0x4, 0)
     memory_write("float", vb + 0x8, 0)
-    memory_write("float", ab,       0)
+    memory_write("float", ab, 0)
     memory_write("float", ab + 0x4, 0)
     memory_write("float", ab + 0x8, 0)
 end
 
-
 local function cancel_velocity_part(part)
     local prim = readPrim(part)
-    if not prim then return end
-    memory_write("float", prim + OFF_VEL,       0)
+    if not prim then
+        return
+    end
+    memory_write("float", prim + OFF_VEL, 0)
     memory_write("float", prim + OFF_VEL + 0x4, 0)
     memory_write("float", prim + OFF_VEL + 0x8, 0)
 end
 
-local WORLD_OFF   = O.Workspace.World
+local WORLD_OFF = O.Workspace.World
 local GRAVITY_OFF = O.World.Gravity
 
 local function setGravity(g)
-    pcall(function()
-        local worldPtr = memory_read("uintptr_t", workspace.Address + WORLD_OFF)
-        memory_write("float", worldPtr + GRAVITY_OFF, g)
-    end)
+    pcall(
+        function()
+            local worldPtr = memory_read("uintptr_t", workspace.Address + WORLD_OFF)
+            memory_write("float", worldPtr + GRAVITY_OFF, g)
+        end
+    )
 end
 
 local tweenActive = false
-local tweenConn   = nil
+local tweenConn = nil
 
 local function cancelTween()
     tweenActive = false
-    if tweenConn then tweenConn:Disconnect(); tweenConn = nil end
+    if tweenConn then
+        tweenConn:Disconnect()
+        tweenConn = nil
+    end
     setGravity(196.2)
     local char = LocalPlayer.Character
-    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-    local hum  = char and char:FindFirstChild("Humanoid")
-    if hrp then cancel_velocity_part(hrp) end
-    if hum then hum.PlatformStand = false end
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChild("Humanoid")
+    if hrp then
+        cancel_velocity_part(hrp)
+    end
+    if hum then
+        hum.PlatformStand = false
+    end
 end
 
 local function tweenToTarget(targetPos, isProbe)
-    if tweenActive then cancelTween() end
+    if tweenActive then
+        cancelTween()
+    end
     tweenActive = true
     setGravity(10)
 
     local char = LocalPlayer.Character
-    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-    local hum  = char and char:FindFirstChild("Humanoid")
-    if not hrp then tweenActive = false; setGravity(196.2); return end
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChild("Humanoid")
+    if not hrp then
+        tweenActive = false
+        setGravity(196.2)
+        return
+    end
 
-    if hum then hum.PlatformStand = true end
+    if hum then
+        hum.PlatformStand = true
+    end
 
     local arrivalDist = isProbe and 5 or 10
-    local decelDist   = isProbe and 30 or 40
-    local minSpeed    = 12
-    local startTime   = tick()
-    local timeout     = 60
+    local decelDist = isProbe and 30 or 40
+    local minSpeed = 12
+    local startTime = tick()
+    local timeout = 60
 
-    task.spawn(function()
-        while tweenActive do
-            if tick() - startTime > timeout then cancelTween(); break end
-
-            local c  = LocalPlayer.Character
-            local rp = c and c:FindFirstChild("HumanoidRootPart")
-            if not rp then cancelTween(); break end
-
-            local curPos = rp.Position
-            local dx     = targetPos.X - curPos.X
-            local dz     = targetPos.Z - curPos.Z
-            local hDist  = math.sqrt(dx * dx + dz * dz)
-
-            if hDist < arrivalDist then
-                if isProbe then
-                    local prim = readPrim(rp)
-                    if prim then writePos(prim, targetPos) end
+    task.spawn(
+        function()
+            while tweenActive do
+                if tick() - startTime > timeout then
+                    cancelTween()
+                    break
                 end
-                rp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                cancelTween()
-                notify("Arrived!", "", 2)
-                break
+
+                local c = LocalPlayer.Character
+                local rp = c and c:FindFirstChild("HumanoidRootPart")
+                if not rp then
+                    cancelTween()
+                    break
+                end
+
+                local curPos = rp.Position
+                local dx = targetPos.X - curPos.X
+                local dz = targetPos.Z - curPos.Z
+                local hDist = math.sqrt(dx * dx + dz * dz)
+
+                if hDist < arrivalDist then
+                    if isProbe then
+                        local prim = readPrim(rp)
+                        if prim then
+                            writePos(prim, targetPos)
+                        end
+                    end
+                    rp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                    cancelTween()
+                    notify("Arrived!", "", 2)
+                    break
+                end
+
+                local speed = cfg.Tween.Speed
+                if hDist < decelDist then
+                    speed = math.max(speed * (hDist / decelDist), minSpeed)
+                end
+
+                local diff = targetPos - curPos
+                local dir = diff.Unit
+                local vel = Vector3.new(dir.X * speed, dir.Y * speed * cfg.Tween.Height, dir.Z * speed)
+
+                rp.AssemblyLinearVelocity = vel
+
+                task.wait(1 / 30)
             end
-
-            local speed = cfg.Tween.Speed
-            if hDist < decelDist then
-                speed = math.max(speed * (hDist / decelDist), minSpeed)
-            end
-
-            local diff = targetPos - curPos
-            local dir  = diff.Unit
-            local vel  = Vector3.new(
-                dir.X * speed,
-                dir.Y * speed * cfg.Tween.Height,
-                dir.Z * speed
-            )
-
-            rp.AssemblyLinearVelocity = vel
-
-            task.wait(1 / 30)
         end
-    end)
+    )
 end
 
 local function goToNearestTornado()
-    if tweenActive then cancelTween(); notify("Cancelled", "", 2); return end
+    if tweenActive then
+        cancelTween()
+        notify("Cancelled", "", 2)
+        return
+    end
     local char = LocalPlayer.Character
-    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then notify("No character", "", 2); return end
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        notify("No character", "", 2)
+        return
+    end
     scanTornadoes()
-    local pp               = hrp.Position
+    local pp = hrp.Position
     local bestDist, bestPos = math.huge, nil
     for _, data in pairs(tornadoData) do
         if data.part and data.part:IsDescendantOf(workspace) then
             local pos = data.part.Position
             local d = (pp - pos).Magnitude
-            if d < bestDist then bestDist = d; bestPos = pos end
+            if d < bestDist then
+                bestDist = d
+                bestPos = pos
+            end
         end
     end
-    if not bestPos then notify("No tornado found", "", 2); return end
+    if not bestPos then
+        notify("No tornado found", "", 2)
+        return
+    end
     local dx, dz = pp.X - bestPos.X, pp.Z - bestPos.Z
-    local hMag   = math.sqrt(dx * dx + dz * dz)
-    local off    = cfg.Tween.Offset
-    local target = hMag > 0
-        and Vector3.new(bestPos.X + dx / hMag * off, bestPos.Y, bestPos.Z + dz / hMag * off)
-        or  bestPos + Vector3.new(off, 0, 0)
+    local hMag = math.sqrt(dx * dx + dz * dz)
+    local off = cfg.Tween.Offset
+    local target =
+        hMag > 0 and Vector3.new(bestPos.X + dx / hMag * off, bestPos.Y, bestPos.Z + dz / hMag * off) or
+        bestPos + Vector3.new(off, 0, 0)
     notify("Going: " .. math.floor(bestDist) .. "m", "", 3)
     tweenToTarget(target)
 end
 
 local function getMyProbesSorted(playerPos)
-    local pr    = workspace:FindFirstChild("player_related")
+    local pr = workspace:FindFirstChild("player_related")
     local pfold = pr and pr:FindFirstChild("probes")
-    if not pfold then return {} end
+    if not pfold then
+        return {}
+    end
 
     local list = {}
     for _, probe in ipairs(pfold:GetChildren()) do
         if probe:IsA("Model") then
-            local isMine = (probe.Name == myUserId)
-                or (myUserId ~= "0" and probe.Name:find(myUserId, 1, true))
+            local isMine = (probe.Name == myUserId) or (myUserId ~= "0" and probe.Name:find(myUserId, 1, true))
             if isMine then
                 local part = findProbePart(probe)
                 if part and part:IsDescendantOf(workspace) then
                     local pos = part.Position
                     list[#list + 1] = {
-                        pos  = pos,
+                        pos = pos,
                         dist = (playerPos - pos).Magnitude,
-                        name = probe.Name,
+                        name = probe.Name
                     }
                 end
             end
         end
     end
 
-    table.sort(list, function(a, b) return a.dist < b.dist end)
+    table.sort(
+        list,
+        function(a, b)
+            return a.dist < b.dist
+        end
+    )
     return list
 end
 
 local function goToProbeByRank(rank)
-    if tweenActive then cancelTween(); notify("Cancelled", "", 2); return end
+    if tweenActive then
+        cancelTween()
+        notify("Cancelled", "", 2)
+        return
+    end
     local char = LocalPlayer.Character
-    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then notify("No character", "", 2); return end
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        notify("No character", "", 2)
+        return
+    end
 
     local list = getMyProbesSorted(hrp.Position)
     if #list == 0 then
@@ -733,26 +885,32 @@ local function goToProbeByRank(rank)
     tweenToTarget(entry.pos, true)
 end
 
-local carCache = { chassis = nil, prim = nil }
+local carCache = {chassis = nil, prim = nil}
 
 local function invalidateCarCache()
     carCache.chassis = nil
-    carCache.prim    = nil
+    carCache.prim = nil
 end
 
 local function findCurrentChassis()
     if carCache.chassis and carCache.chassis.Parent then
         return carCache.chassis
     end
-    local pr   = workspace:FindFirstChild("player_related")
+    local pr = workspace:FindFirstChild("player_related")
     local cars = pr and pr:FindFirstChild("cars")
-    if not cars then invalidateCarCache(); return nil end
+    if not cars then
+        invalidateCarCache()
+        return nil
+    end
     local car = cars:FindFirstChild(myUserId)
-    if not car then invalidateCarCache(); return nil end
+    if not car then
+        invalidateCarCache()
+        return nil
+    end
     for _, desc in ipairs(car:GetDescendants()) do
         if desc:IsA("BasePart") and desc.Name == "chassis" then
             carCache.chassis = desc
-            carCache.prim    = nil
+            carCache.prim = nil
             return desc
         end
     end
@@ -765,100 +923,121 @@ local function findCurrentPrim()
         return carCache.prim
     end
     local ch = findCurrentChassis()
-    if not ch then return nil end
+    if not ch then
+        return nil
+    end
     carCache.prim = readPrim(ch)
     return carCache.prim
 end
 
-local freeze     = { chassis = nil, lockedPos = nil, lockedRot = nil, prim = nil, active = false }
-local charFreeze = { hrp = nil, lockedPos = nil, prim = nil, active = false }
+local freeze = {chassis = nil, lockedPos = nil, lockedRot = nil, prim = nil, active = false}
+local charFreeze = {hrp = nil, lockedPos = nil, prim = nil, active = false}
 
 local function applyCarFreeze()
-    if freeze.active then return end
+    if freeze.active then
+        return
+    end
     local ch = findCurrentChassis()
-    if not ch then return end
+    if not ch then
+        return
+    end
     local prim = readPrim(ch)
-    if not prim then return end
+    if not prim then
+        return
+    end
     local pos = readPos(prim)
-    if not pos then return end
+    if not pos then
+        return
+    end
     local rot = {}
     for i = 0, 8 do
         rot[i + 1] = memory_read("float", prim + OFF_CF + i * 4)
     end
-    freeze.chassis   = ch
+    freeze.chassis = ch
     freeze.lockedPos = pos
     freeze.lockedRot = rot
-    freeze.prim      = prim
-    freeze.active    = true
+    freeze.prim = prim
+    freeze.active = true
 end
 
 local function releaseCarFreeze()
-    freeze.chassis   = nil
+    freeze.chassis = nil
     freeze.lockedPos = nil
     freeze.lockedRot = nil
-    freeze.prim      = nil
-    freeze.active    = false
+    freeze.prim = nil
+    freeze.active = false
 end
 
 local function applyCharFreeze()
-    if charFreeze.active then return end
+    if charFreeze.active then
+        return
+    end
     local char = LocalPlayer.Character
-    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        return
+    end
     local prim = readPrim(hrp)
-    if not prim then return end
+    if not prim then
+        return
+    end
     local pos = readPos(prim)
-    if not pos then return end
-    charFreeze.hrp       = hrp
+    if not pos then
+        return
+    end
+    charFreeze.hrp = hrp
     charFreeze.lockedPos = pos
-    charFreeze.prim      = prim
-    charFreeze.active    = true
+    charFreeze.prim = prim
+    charFreeze.active = true
 end
 
 local function releaseCharFreeze()
-    charFreeze.hrp       = nil
+    charFreeze.hrp = nil
     charFreeze.lockedPos = nil
-    charFreeze.prim      = nil
-    charFreeze.active    = false
+    charFreeze.prim = nil
+    charFreeze.active = false
 end
 
-
-local boostWidget      = nil
-local brakeWidget      = nil
-local carFreezeWidget  = nil
+local boostWidget = nil
+local brakeWidget = nil
+local carFreezeWidget = nil
 local charFreezeWidget = nil
-local charBoostWidget  = nil
-local tweenWidget      = nil
-local _cfPrev          = false
-local _chPrev          = false
-local _tweenPrev       = false
+local charBoostWidget = nil
+local tweenWidget = nil
+local _cfPrev = false
+local _chPrev = false
+local _tweenPrev = false
 
-local speedHudLabel        = Drawing.new("Text")
-speedHudLabel.Center       = true
-speedHudLabel.Outline      = true
-speedHudLabel.Font         = 2
-speedHudLabel.Size         = 16
+local speedHudLabel = Drawing.new("Text")
+speedHudLabel.Center = true
+speedHudLabel.Outline = true
+speedHudLabel.Font = 2
+speedHudLabel.Size = 16
 speedHudLabel.Transparency = 1
-speedHudLabel.Color        = Color3.new(1, 1, 1)
-speedHudLabel.Visible      = false
+speedHudLabel.Color = Color3.new(1, 1, 1)
+speedHudLabel.Visible = false
 
 local function applyCarBoost()
     local prim = findCurrentPrim()
-    if not prim then return end
+    if not prim then
+        return
+    end
     local ch = carCache.chassis
-    if not ch then return end
+    if not ch then
+        return
+    end
     local cf = ch.CFrame
     local lvx, lvz = cf.LookVector.X, cf.LookVector.Z
     local rvx, rvz = cf.RightVector.X, cf.RightVector.Z
-    local vb  = prim + OFF_VEL
-    local vx  = memory_read("float", vb)
-    local vy  = memory_read("float", vb + 0x4)
-    local vz  = memory_read("float", vb + 0x8)
+    local vb = prim + OFF_VEL
+    local vx = memory_read("float", vb)
+    local vy = memory_read("float", vb + 0x4)
+    local vz = memory_read("float", vb + 0x8)
     local maxSpeed = cfg.CarBoost.Force * 0.016
-    local gap      = math.max(0, maxSpeed - (vx * lvx + vz * lvz))
-    local accel    = gap * (0.3 + 0.5 * (gap / (maxSpeed + 1)))
+    local gap = math.max(0, maxSpeed - (vx * lvx + vz * lvz))
+    local accel = gap * (0.3 + 0.5 * (gap / (maxSpeed + 1)))
     local latSpeed = vx * rvx + vz * rvz
-    local ld       = cfg.CarBoost.LatDamp
+    local ld = cfg.CarBoost.LatDamp
     vx = vx + lvx * accel - rvx * latSpeed * ld
     vz = vz + lvz * accel - rvz * latSpeed * ld
     local hMag = math.sqrt(vx * vx + vz * vz)
@@ -867,64 +1046,91 @@ local function applyCarBoost()
         vx = vx * s
         vz = vz * s
     end
-    memory_write("float", vb,       vx)
+    memory_write("float", vb, vx)
     memory_write("float", vb + 0x4, vy)
     memory_write("float", vb + 0x8, vz)
     local ab = prim + OFF_ANG_VEL
-    memory_write("float", ab,       0)
+    memory_write("float", ab, 0)
     memory_write("float", ab + 0x4, 0)
     memory_write("float", ab + 0x8, 0)
 end
 
 local function applyCarBrake()
     local prim = findCurrentPrim()
-    if not prim then return end
+    if not prim then
+        return
+    end
     local vb = prim + OFF_VEL
     local vx = memory_read("float", vb)
     local vy = memory_read("float", vb + 0x4)
     local vz = memory_read("float", vb + 0x8)
     local hSpeed = math.sqrt(vx * vx + vz * vz)
-    local ratio  = math.max(0, 1 - math.clamp(cfg.CarBrake.Force * 0.016 / math.max(hSpeed, 1), 0, 1))
-    if hSpeed * ratio < 0.5 then ratio = 0 end
+    local ratio = math.max(0, 1 - math.clamp(cfg.CarBrake.Force * 0.016 / math.max(hSpeed, 1), 0, 1))
+    if hSpeed * ratio < 0.5 then
+        ratio = 0
+    end
     local vRatio = math.max(0, 1 - math.clamp(cfg.CarBrake.Force * 0.008 / math.max(math.abs(vy), 1), 0, 1))
-    memory_write("float", vb,       vx * ratio)
+    memory_write("float", vb, vx * ratio)
     memory_write("float", vb + 0x4, vy * vRatio)
     memory_write("float", vb + 0x8, vz * ratio)
     local ab = prim + OFF_ANG_VEL
-    memory_write("float", ab,       0)
+    memory_write("float", ab, 0)
     memory_write("float", ab + 0x4, 0)
     memory_write("float", ab + 0x8, 0)
 end
 
 local function applyCharBoost(dt)
     local char = LocalPlayer.Character
-    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        return
+    end
     local prim = readPrim(hrp)
-    if not prim then return end
+    if not prim then
+        return
+    end
     local cam = workspace.CurrentCamera
-    if not cam then return end
+    if not cam then
+        return
+    end
     local camPos = cam.Position
     local hrpPos = hrp.Position
     local lvx, lvz = hrpPos.X - camPos.X, hrpPos.Z - camPos.Z
-    local lm = math.sqrt(lvx*lvx + lvz*lvz)
-    if lm < 0.01 then return end
-    lvx = lvx/lm; lvz = lvz/lm
+    local lm = math.sqrt(lvx * lvx + lvz * lvz)
+    if lm < 0.01 then
+        return
+    end
+    lvx = lvx / lm
+    lvz = lvz / lm
     local rvx, rvz = -lvz, lvx
     local mx, mz = 0, 0
-    if iskeypressed(0x57) then mx = mx + lvx; mz = mz + lvz end
-    if iskeypressed(0x53) then mx = mx - lvx; mz = mz - lvz end
-    if iskeypressed(0x41) then mx = mx - rvx; mz = mz - rvz end
-    if iskeypressed(0x44) then mx = mx + rvx; mz = mz + rvz end
-    local mm = math.sqrt(mx*mx + mz*mz)
-    if mm < 0.01 then return end
-    local s  = cfg.CharBoost.Force * 0.016 * dt / mm
+    if iskeypressed(0x57) then
+        mx = mx + lvx
+        mz = mz + lvz
+    end
+    if iskeypressed(0x53) then
+        mx = mx - lvx
+        mz = mz - lvz
+    end
+    if iskeypressed(0x41) then
+        mx = mx - rvx
+        mz = mz - rvz
+    end
+    if iskeypressed(0x44) then
+        mx = mx + rvx
+        mz = mz + rvz
+    end
+    local mm = math.sqrt(mx * mx + mz * mz)
+    if mm < 0.01 then
+        return
+    end
+    local s = cfg.CharBoost.Force * 0.016 * dt / mm
     local pb = prim + OFF_CF + OFF_POS
     local vb = prim + OFF_VEL
-    memory_write("float", pb,       memory_read("float", pb)       + mx * s)
+    memory_write("float", pb, memory_read("float", pb) + mx * s)
     memory_write("float", pb + 0x4, memory_read("float", pb + 0x4))
     memory_write("float", pb + 0x8, memory_read("float", pb + 0x8) + mz * s)
-    memory_write("float", vb,       0)
+    memory_write("float", vb, 0)
     memory_write("float", vb + 0x4, 0)
     memory_write("float", vb + 0x8, 0)
 end
@@ -934,232 +1140,372 @@ local CONFIG_FILE = "storm_tracker_cfg.json"
 local function saveKeyVK(widget, default)
     if widget then
         local k = widget:GetKey()
-        if type(k) == "number" then return k end
+        if type(k) == "number" then
+            return k
+        end
     end
     return default
 end
 
 local function saveConfig()
-    local t    = cfg.Tornado
-    local p    = cfg.Probe
+    local t = cfg.Tornado
+    local p = cfg.Probe
     local data = {
-        TornadoESP  = cfg.TornadoESP.Visible,
-        ProbeESP    = cfg.ProbeESP.Visible,
-        CarBoost    = cfg.CarBoost.Enabled,
-        CarBrake    = cfg.CarBrake.Enabled,
-        CarFreeze   = cfg.CarFreeze.Enabled,
+        TornadoESP = cfg.TornadoESP.Visible,
+        ProbeESP = cfg.ProbeESP.Visible,
+        CarBoost = cfg.CarBoost.Enabled,
+        CarBrake = cfg.CarBrake.Enabled,
+        CarFreeze = cfg.CarFreeze.Enabled,
         CarFreezeSoft = cfg.CarFreeze.Soft,
-        CharFreeze  = cfg.CharacterFreeze.Enabled,
-        T_Box       = t.ShowBox,
-        T_Line      = t.ShowLine,
-        T_Circle    = t.ShowCircle,
-        TBoxC       = { t.BoxColor.R,    t.BoxColor.G,    t.BoxColor.B    },
-        TLineC      = { t.LineColor.R,   t.LineColor.G,   t.LineColor.B   },
-        TCircleC    = { t.CircleColor.R, t.CircleColor.G, t.CircleColor.B },
-        TTextC      = { t.TextColor.R,   t.TextColor.G,   t.TextColor.B   },
-        PBoxC       = { p.BoxColor.R,    p.BoxColor.G,    p.BoxColor.B    },
-        PTextC      = { p.TextColor.R,   p.TextColor.G,   p.TextColor.B   },
-        TweenSpeed  = cfg.Tween.Speed,
+        CharFreeze = cfg.CharacterFreeze.Enabled,
+        T_Box = t.ShowBox,
+        T_Line = t.ShowLine,
+        T_Circle = t.ShowCircle,
+        TBoxC = {t.BoxColor.R, t.BoxColor.G, t.BoxColor.B},
+        TLineC = {t.LineColor.R, t.LineColor.G, t.LineColor.B},
+        TCircleC = {t.CircleColor.R, t.CircleColor.G, t.CircleColor.B},
+        TTextC = {t.TextColor.R, t.TextColor.G, t.TextColor.B},
+        PBoxC = {p.BoxColor.R, p.BoxColor.G, p.BoxColor.B},
+        PTextC = {p.TextColor.R, p.TextColor.G, p.TextColor.B},
+        TweenSpeed = cfg.Tween.Speed,
         TweenHeight = cfg.Tween.Height,
         TweenOffset = cfg.Tween.Offset,
         TweenEnabled = cfg.Tween.Enabled,
-        BoostForce  = cfg.CarBoost.Force,
-        BrakeForce  = cfg.CarBrake.Force,
-        BoostKB       = saveKeyVK(boostWidget,      cfg.CarBoost.KeyVK),
-        BrakeKB       = saveKeyVK(brakeWidget,      cfg.CarBrake.KeyVK),
-        CarFrzKB      = saveKeyVK(carFreezeWidget,  cfg.CarFreeze.KeyVK),
-        CharFrzKB     = saveKeyVK(charFreezeWidget, cfg.CharacterFreeze.KeyVK),
-        CharBoost     = cfg.CharBoost.Enabled,
-        CharBoostForce= cfg.CharBoost.Force,
-        CharBoostKB   = saveKeyVK(charBoostWidget,  cfg.CharBoost.KeyVK),
-        TweenKB       = saveKeyVK(tweenWidget,      cfg.Tween.KeyVK),
-        LatDamp       = cfg.CarBoost.LatDamp,
-        MaxESPDist    = cfg.MaxESPDist,
-        SpeedHUD      = cfg.SpeedHUD.Visible,
+        BoostForce = cfg.CarBoost.Force,
+        BrakeForce = cfg.CarBrake.Force,
+        BoostKB = saveKeyVK(boostWidget, cfg.CarBoost.KeyVK),
+        BrakeKB = saveKeyVK(brakeWidget, cfg.CarBrake.KeyVK),
+        CarFrzKB = saveKeyVK(carFreezeWidget, cfg.CarFreeze.KeyVK),
+        CharFrzKB = saveKeyVK(charFreezeWidget, cfg.CharacterFreeze.KeyVK),
+        CharBoost = cfg.CharBoost.Enabled,
+        CharBoostForce = cfg.CharBoost.Force,
+        CharBoostKB = saveKeyVK(charBoostWidget, cfg.CharBoost.KeyVK),
+        TweenKB = saveKeyVK(tweenWidget, cfg.Tween.KeyVK),
+        LatDamp = cfg.CarBoost.LatDamp,
+        MaxESPDist = cfg.MaxESPDist,
+        SpeedHUD = cfg.SpeedHUD.Visible
     }
-    pcall(function()
-        writefile(CONFIG_FILE, Http:JSONEncode(data))
-    end)
+    pcall(
+        function()
+            writefile(CONFIG_FILE, Http:JSONEncode(data))
+        end
+    )
     notify("Config saved!", "", 3)
 end
 
 local function loadConfig()
-    pcall(function()
-        if not isfile(CONFIG_FILE) then return end
-        local raw = readfile(CONFIG_FILE)
-        if not raw or raw == "" then return end
-        local data = Http:JSONDecode(raw)
-        if type(data) ~= "table" then return end
-
-        local function getBool(key, default)
-            local v = data[key]
-            return type(v) == "boolean" and v or default
-        end
-        local function getNum(key, default)
-            return tonumber(data[key]) or default
-        end
-        local function getColor(key, default)
-            local arr = data[key]
-            if type(arr) == "table" then
-                return Color3.new(
-                    math.clamp(tonumber(arr[1]) or default.R, 0, 1),
-                    math.clamp(tonumber(arr[2]) or default.G, 0, 1),
-                    math.clamp(tonumber(arr[3]) or default.B, 0, 1)
-                )
+    pcall(
+        function()
+            if not isfile(CONFIG_FILE) then
+                return
             end
-            return default
+            local raw = readfile(CONFIG_FILE)
+            if not raw or raw == "" then
+                return
+            end
+            local data = Http:JSONDecode(raw)
+            if type(data) ~= "table" then
+                return
+            end
+
+            local function getBool(key, default)
+                local v = data[key]
+                return type(v) == "boolean" and v or default
+            end
+            local function getNum(key, default)
+                return tonumber(data[key]) or default
+            end
+            local function getColor(key, default)
+                local arr = data[key]
+                if type(arr) == "table" then
+                    return Color3.new(
+                        math.clamp(tonumber(arr[1]) or default.R, 0, 1),
+                        math.clamp(tonumber(arr[2]) or default.G, 0, 1),
+                        math.clamp(tonumber(arr[3]) or default.B, 0, 1)
+                    )
+                end
+                return default
+            end
+
+            cfg.TornadoESP.Visible = getBool("TornadoESP", false)
+            cfg.ProbeESP.Visible = getBool("ProbeESP", false)
+            cfg.CarBoost.Enabled = getBool("CarBoost", false)
+            cfg.CarBrake.Enabled = getBool("CarBrake", false)
+            cfg.CarFreeze.Enabled = getBool("CarFreeze", false)
+            cfg.CarFreeze.Soft = getBool("CarFreezeSoft", false)
+            cfg.CharacterFreeze.Enabled = getBool("CharFreeze", false)
+
+            local t = cfg.Tornado
+            t.ShowBox = getBool("T_Box", true)
+            t.ShowLine = getBool("T_Line", true)
+            t.ShowCircle = getBool("T_Circle", true)
+            t.BoxColor = getColor("TBoxC", Color3.new(1, 0, 0))
+            t.LineColor = getColor("TLineC", Color3.new(1, 1, 0))
+            t.CircleColor = getColor("TCircleC", Color3.new(0, 1, 1))
+            t.TextColor = getColor("TTextC", Color3.new(1, 0, 0))
+
+            local p = cfg.Probe
+            p.BoxColor = getColor("PBoxC", Color3.new(0, 1, 1))
+            p.TextColor = getColor("PTextC", Color3.new(0, 1, 1))
+
+            cfg.Tween.Speed = getNum("TweenSpeed", 120)
+            cfg.Tween.Height = getNum("TweenHeight", 0.5)
+            cfg.Tween.Offset = getNum("TweenOffset", 30)
+            cfg.Tween.Enabled = getBool("TweenEnabled", false)
+            cfg.CarBoost.Force = getNum("BoostForce", 50000)
+            cfg.CarBrake.Force = getNum("BrakeForce", 5000)
+            cfg.CarBoost.KeyVK = getNum("BoostKB", 0x05)
+            cfg.CarBrake.KeyVK = getNum("BrakeKB", 0x58)
+            cfg.CarFreeze.KeyVK = getNum("CarFrzKB", 0x4B)
+            cfg.CharacterFreeze.KeyVK = getNum("CharFrzKB", 0x4C)
+            cfg.CharBoost.Enabled = getBool("CharBoost", false)
+            cfg.CharBoost.Force = getNum("CharBoostForce", 30000)
+            cfg.CharBoost.KeyVK = getNum("CharBoostKB", 0x47)
+            cfg.Tween.KeyVK = getNum("TweenKB", 0x54)
+            cfg.CarBoost.LatDamp = getNum("LatDamp", 0.5)
+            cfg.MaxESPDist = getNum("MaxESPDist", 5000)
+            cfg.SpeedHUD.Visible = getBool("SpeedHUD", false)
         end
-
-        cfg.TornadoESP.Visible      = getBool("TornadoESP", false)
-        cfg.ProbeESP.Visible        = getBool("ProbeESP",   false)
-        cfg.CarBoost.Enabled        = getBool("CarBoost",   false)
-        cfg.CarBrake.Enabled        = getBool("CarBrake",   false)
-        cfg.CarFreeze.Enabled       = getBool("CarFreeze",  false)
-        cfg.CarFreeze.Soft          = getBool("CarFreezeSoft", false)
-        cfg.CharacterFreeze.Enabled = getBool("CharFreeze", false)
-
-        local t = cfg.Tornado
-        t.ShowBox    = getBool("T_Box",    true)
-        t.ShowLine   = getBool("T_Line",   true)
-        t.ShowCircle = getBool("T_Circle", true)
-        t.BoxColor    = getColor("TBoxC",    Color3.new(1, 0, 0))
-        t.LineColor   = getColor("TLineC",   Color3.new(1, 1, 0))
-        t.CircleColor = getColor("TCircleC", Color3.new(0, 1, 1))
-        t.TextColor   = getColor("TTextC",   Color3.new(1, 0, 0))
-
-        local p = cfg.Probe
-        p.BoxColor  = getColor("PBoxC",  Color3.new(0, 1, 1))
-        p.TextColor = getColor("PTextC", Color3.new(0, 1, 1))
-
-        cfg.Tween.Speed    = getNum("TweenSpeed",  120)
-        cfg.Tween.Height   = getNum("TweenHeight", 0.5)
-        cfg.Tween.Offset   = getNum("TweenOffset", 30)
-        cfg.Tween.Enabled  = getBool("TweenEnabled", false)
-        cfg.CarBoost.Force        = getNum("BoostForce",  50000)
-        cfg.CarBrake.Force        = getNum("BrakeForce",  5000)
-        cfg.CarBoost.KeyVK        = getNum("BoostKB",       0x05)
-        cfg.CarBrake.KeyVK        = getNum("BrakeKB",       0x58)
-        cfg.CarFreeze.KeyVK       = getNum("CarFrzKB",      0x4B)
-        cfg.CharacterFreeze.KeyVK = getNum("CharFrzKB",     0x4C)
-        cfg.CharBoost.Enabled     = getBool("CharBoost",    false)
-        cfg.CharBoost.Force       = getNum("CharBoostForce",30000)
-        cfg.CharBoost.KeyVK       = getNum("CharBoostKB",   0x47)
-        cfg.Tween.KeyVK           = getNum("TweenKB",       0x54)
-        cfg.CarBoost.LatDamp      = getNum("LatDamp",       0.5)
-        cfg.MaxESPDist            = getNum("MaxESPDist",    5000)
-        cfg.SpeedHUD.Visible      = getBool("SpeedHUD",     false)
-    end)
+    )
 end
 
 local function BuildESP(Tab)
     local S = Tab:Section("ESP", "Left")
-    S:Toggle("TornadoESP", "Tornado ESP", cfg.TornadoESP.Visible, function(state)
-        cfg.TornadoESP.Visible = state
-        notify(state and "Tornado ESP enabled" or "Tornado ESP disabled", "", 3)
-        if state then
-            scanTornadoes()
-        else
-            for key in pairs(activeKeys.tornado) do hideEntry(espPool[key]) end
+    S:Toggle(
+        "TornadoESP",
+        "Tornado ESP",
+        cfg.TornadoESP.Visible,
+        function(state)
+            cfg.TornadoESP.Visible = state
+            notify(state and "Tornado ESP enabled" or "Tornado ESP disabled", "", 3)
+            if state then
+                scanTornadoes()
+            else
+                for key in pairs(activeKeys.tornado) do
+                    hideEntry(espPool[key])
+                end
+            end
         end
-    end)
+    )
     S:Spacing()
-    S:Toggle("ProbeESP", "Probe ESP", cfg.ProbeESP.Visible, function(state)
-        cfg.ProbeESP.Visible = state
-        notify(state and "Probe ESP enabled" or "Probe ESP disabled", "", 3)
-        if state then scanProbes() else
-            for key in pairs(activeKeys.probe) do hideEntry(espPool[key]) end
+    S:Toggle(
+        "ProbeESP",
+        "Probe ESP",
+        cfg.ProbeESP.Visible,
+        function(state)
+            cfg.ProbeESP.Visible = state
+            notify(state and "Probe ESP enabled" or "Probe ESP disabled", "", 3)
+            if state then
+                scanProbes()
+            else
+                for key in pairs(activeKeys.probe) do
+                    hideEntry(espPool[key])
+                end
+            end
         end
-    end)
+    )
     S:Spacing()
     S:Text("For fullbright, enable Custom Time = 12.00")
     S:Spacing()
-    S:Toggle("SpeedHUD", "Speed HUD", cfg.SpeedHUD.Visible, function(state)
-        cfg.SpeedHUD.Visible  = state
-        speedHudLabel.Visible = false
-    end)
+    S:Toggle(
+        "SpeedHUD",
+        "Speed HUD",
+        cfg.SpeedHUD.Visible,
+        function(state)
+            cfg.SpeedHUD.Visible = state
+            speedHudLabel.Visible = false
+        end
+    )
     S:Spacing()
     S:Text("Hide ESP beyond this distance")
-    S:SliderInt("MaxESPDist", "Max Render Distance (m)", 100, 500000, cfg.MaxESPDist, function(v)
-        cfg.MaxESPDist = v
-    end)
+    S:SliderInt(
+        "MaxESPDist",
+        "Max Render Distance (m)",
+        100,
+        500000,
+        cfg.MaxESPDist,
+        function(v)
+            cfg.MaxESPDist = v
+        end
+    )
     S:Spacing()
     S:Spacing()
-    S:Button("Save Config", function() saveConfig() end)
+    S:Button(
+        "Save Config",
+        function()
+            saveConfig()
+        end
+    )
 end
 
 local function BuildTornadoCustom(Tab)
     local t = cfg.Tornado
     local S = Tab:Section("Tornado Customization", "Left")
-    S:Toggle("TornadoBox", "Box", t.ShowBox, function(state)
-        t.ShowBox = state
-        if not state then
-            for _, e in pairs(espPool) do if e.box then e.box.Visible = false end end
+    S:Toggle(
+        "TornadoBox",
+        "Box",
+        t.ShowBox,
+        function(state)
+            t.ShowBox = state
+            if not state then
+                for _, e in pairs(espPool) do
+                    if e.box then
+                        e.box.Visible = false
+                    end
+                end
+            end
         end
-    end)
-    S:ColorPicker("TornadoBoxColor", t.BoxColor.R, t.BoxColor.G, t.BoxColor.B, 1, function(c)
-        t.BoxColor = c; syncTornadoColors()
-    end)
+    )
+    S:ColorPicker(
+        "TornadoBoxColor",
+        t.BoxColor.R,
+        t.BoxColor.G,
+        t.BoxColor.B,
+        1,
+        function(c)
+            t.BoxColor = c
+            syncTornadoColors()
+        end
+    )
     S:Spacing()
-    S:Toggle("TornadoLine", "Direction Line", t.ShowLine, function(state)
-        t.ShowLine = state
-        if not state then
-            for _, e in pairs(espPool) do if e.line then e.line.Visible = false end end
+    S:Toggle(
+        "TornadoLine",
+        "Direction Line",
+        t.ShowLine,
+        function(state)
+            t.ShowLine = state
+            if not state then
+                for _, e in pairs(espPool) do
+                    if e.line then
+                        e.line.Visible = false
+                    end
+                end
+            end
         end
-    end)
-    S:ColorPicker("TornadoLineColor", t.LineColor.R, t.LineColor.G, t.LineColor.B, 1, function(c)
-        t.LineColor = c; syncTornadoColors()
-    end)
+    )
+    S:ColorPicker(
+        "TornadoLineColor",
+        t.LineColor.R,
+        t.LineColor.G,
+        t.LineColor.B,
+        1,
+        function(c)
+            t.LineColor = c
+            syncTornadoColors()
+        end
+    )
     S:Spacing()
-    S:Toggle("TornadoCircle", "Direction Circle", t.ShowCircle, function(state)
-        t.ShowCircle = state
-        if not state then
-            for _, e in pairs(espPool) do if e.circle then e.circle.Visible = false end end
+    S:Toggle(
+        "TornadoCircle",
+        "Direction Circle",
+        t.ShowCircle,
+        function(state)
+            t.ShowCircle = state
+            if not state then
+                for _, e in pairs(espPool) do
+                    if e.circle then
+                        e.circle.Visible = false
+                    end
+                end
+            end
         end
-    end)
-    S:ColorPicker("TornadoCircleColor", t.CircleColor.R, t.CircleColor.G, t.CircleColor.B, 1, function(c)
-        t.CircleColor = c; syncTornadoColors()
-    end)
+    )
+    S:ColorPicker(
+        "TornadoCircleColor",
+        t.CircleColor.R,
+        t.CircleColor.G,
+        t.CircleColor.B,
+        1,
+        function(c)
+            t.CircleColor = c
+            syncTornadoColors()
+        end
+    )
     S:Spacing()
     S:Text("Name / Distance Label")
-    S:ColorPicker("TornadoTextColor", t.TextColor.R, t.TextColor.G, t.TextColor.B, 1, function(c)
-        t.TextColor = c; syncTornadoColors()
-    end)
+    S:ColorPicker(
+        "TornadoTextColor",
+        t.TextColor.R,
+        t.TextColor.G,
+        t.TextColor.B,
+        1,
+        function(c)
+            t.TextColor = c
+            syncTornadoColors()
+        end
+    )
 end
 
 local function BuildProbeCustom(Tab)
     local p = cfg.Probe
     local S = Tab:Section("Probe Customization", "Left")
     S:Text("Box Color")
-    S:ColorPicker("ProbeBoxColor", p.BoxColor.R, p.BoxColor.G, p.BoxColor.B, 1, function(c)
-        p.BoxColor = c; syncProbeColors()
-    end)
+    S:ColorPicker(
+        "ProbeBoxColor",
+        p.BoxColor.R,
+        p.BoxColor.G,
+        p.BoxColor.B,
+        1,
+        function(c)
+            p.BoxColor = c
+            syncProbeColors()
+        end
+    )
     S:Spacing()
     S:Text("Name / Distance Label Color")
-    S:ColorPicker("ProbeTextColor", p.TextColor.R, p.TextColor.G, p.TextColor.B, 1, function(c)
-        p.TextColor = c; syncProbeColors()
-    end)
+    S:ColorPicker(
+        "ProbeTextColor",
+        p.TextColor.R,
+        p.TextColor.G,
+        p.TextColor.B,
+        1,
+        function(c)
+            p.TextColor = c
+            syncProbeColors()
+        end
+    )
 end
 
 local function BuildBoost(Tab)
     local S = Tab:Section("Car Boost", "Left")
     S:Text("Hold keybind to boost forward")
     S:Spacing()
-    S:Toggle("boost_on", "Car Boost", cfg.CarBoost.Enabled, function(state)
-        cfg.CarBoost.Enabled = state
-        notify(state and "Car Boost ON" or "Car Boost OFF", "", 2)
-    end)
+    S:Toggle(
+        "boost_on",
+        "Car Boost",
+        cfg.CarBoost.Enabled,
+        function(state)
+            cfg.CarBoost.Enabled = state
+            notify(state and "Car Boost ON" or "Car Boost OFF", "", 2)
+        end
+    )
     boostWidget = S:Keybind("boost_kb", cfg.CarBoost.KeyVK, "hold")
     boostWidget:AddToHotkey("Car Boost", "boost_on")
     S:Spacing()
     S:Text("5k=gentle  150k=normal  500k=rocket")
-    S:SliderInt("boost_force", "Force Amount", 5000, 500000, cfg.CarBoost.Force, function(v)
-        cfg.CarBoost.Force = v
-    end)
+    S:SliderInt(
+        "boost_force",
+        "Force Amount",
+        5000,
+        500000,
+        cfg.CarBoost.Force,
+        function(v)
+            cfg.CarBoost.Force = v
+        end
+    )
     S:Spacing()
     S:Text("0.0=no damping  0.5=normal  1.0=locked")
-    S:SliderFloat("lat_damp", "Wind Resistance", 0.0, 1.0, cfg.CarBoost.LatDamp, "%.2f", function(v)
-        cfg.CarBoost.LatDamp = v
-    end)
+    S:SliderFloat(
+        "lat_damp",
+        "Wind Resistance",
+        0.0,
+        1.0,
+        cfg.CarBoost.LatDamp,
+        "%.2f",
+        function(v)
+            cfg.CarBoost.LatDamp = v
+        end
+    )
     S:Spacing()
     S:Tip("Works with trucks and large chassis. Must be seated.")
 end
@@ -1168,50 +1514,94 @@ local function BuildBrake(Tab)
     local S = Tab:Section("Super Brake", "Left")
     S:Text("Hold keybind to brake")
     S:Spacing()
-    S:Toggle("brake_on", "Super Brake", cfg.CarBrake.Enabled, function(state)
-        cfg.CarBrake.Enabled = state
-        notify(state and "Brake ON" or "Brake OFF", "", 2)
-    end)
+    S:Toggle(
+        "brake_on",
+        "Super Brake",
+        cfg.CarBrake.Enabled,
+        function(state)
+            cfg.CarBrake.Enabled = state
+            notify(state and "Brake ON" or "Brake OFF", "", 2)
+        end
+    )
     brakeWidget = S:Keybind("brake_kb", cfg.CarBrake.KeyVK, "hold")
     brakeWidget:AddToHotkey("Super Brake", "brake_on")
     S:Spacing()
     S:Text("100=gentle  5k=normal  100k=instant")
-    S:SliderInt("brake_force", "Brake Force", 100, 100000, cfg.CarBrake.Force, function(v)
-        cfg.CarBrake.Force = v
-    end)
+    S:SliderInt(
+        "brake_force",
+        "Brake Force",
+        100,
+        100000,
+        cfg.CarBrake.Force,
+        function(v)
+            cfg.CarBrake.Force = v
+        end
+    )
     S:Spacing()
     S:Tip("Must be seated in the car.")
 end
 
 local function BuildTween(Tab)
     local S = Tab:Section("Tween to Tornado", "Right")
-    S:Toggle("TweenEnabled", "Tween to Tornado", cfg.Tween.Enabled, function(state)
-        cfg.Tween.Enabled = state
-        notify(state and "Tween to Tornado enabled" or "Tween to Tornado disabled", "", 2)
-    end)
+    S:Toggle(
+        "TweenEnabled",
+        "Tween to Tornado",
+        cfg.Tween.Enabled,
+        function(state)
+            cfg.Tween.Enabled = state
+            notify(state and "Tween to Tornado enabled" or "Tween to Tornado disabled", "", 2)
+        end
+    )
     S:Spacing()
     S:Text("Fly fast to tornado position")
     S:Text("Press again while moving to cancel")
     S:Spacing()
     S:Text("Speed: 50=slow  120=normal  500=fast")
-    S:SliderInt("TweenSpeed", "Speed (studs/s)", 50, 500, cfg.Tween.Speed, function(v)
-        cfg.Tween.Speed = v
-    end)
+    S:SliderInt(
+        "TweenSpeed",
+        "Speed (studs/s)",
+        50,
+        500,
+        cfg.Tween.Speed,
+        function(v)
+            cfg.Tween.Speed = v
+        end
+    )
     S:Spacing()
     S:Text("Height: 0.1=ground  0.5=normal  2.0=high")
-    S:SliderFloat("TweenHeight", "Height Multiplier", 0.1, 2.0, cfg.Tween.Height, "%.1f", function(v)
-        cfg.Tween.Height = v
-    end)
+    S:SliderFloat(
+        "TweenHeight",
+        "Height Multiplier",
+        0.1,
+        2.0,
+        cfg.Tween.Height,
+        "%.1f",
+        function(v)
+            cfg.Tween.Height = v
+        end
+    )
     S:Spacing()
     S:Text("Stop distance before center")
-    S:SliderInt("TweenOffset", "Stop Distance (studs)", 10, 200, cfg.Tween.Offset, function(v)
-        cfg.Tween.Offset = v
-    end)
+    S:SliderInt(
+        "TweenOffset",
+        "Stop Distance (studs)",
+        10,
+        200,
+        cfg.Tween.Offset,
+        function(v)
+            cfg.Tween.Offset = v
+        end
+    )
     S:Spacing()
     tweenWidget = S:Keybind("tween_kb", cfg.Tween.KeyVK, "hold")
     tweenWidget:AddToHotkey("Tween to Tornado", "TweenEnabled")
     S:Spacing()
-    S:Button("Go to Nearest Tornado", function() goToNearestTornado() end)
+    S:Button(
+        "Go to Nearest Tornado",
+        function()
+            goToNearestTornado()
+        end
+    )
 end
 
 local function BuildTweenProbe(Tab)
@@ -1221,55 +1611,94 @@ local function BuildTweenProbe(Tab)
     S:Spacing()
     S:Text("Uses the same speed / height settings as tornado tween.")
     S:Spacing()
-    S:Button("Go to Nearest Probe", function()
-        if tweenActive then cancelTween(); notify("Cancelled", "", 2); return end
-        local char = LocalPlayer.Character
-        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-        if not hrp then return end
-        local list = getMyProbesSorted(hrp.Position)
-        if #list == 0 then notify("No probes found for id: " .. myUserId, "", 3); return end
-        local entry = list[1]
-        notify(string.format("Going to probe #1 | %.0fm", entry.dist), "", 3)
-        tweenToTarget(entry.pos, true)
-    end)
-    S:Spacing()
-    S:Button("Go to 2nd Closest Probe", function() goToProbeByRank(2) end)
-    S:Spacing()
-    S:Button("Go to 3rd Closest Probe", function() goToProbeByRank(3) end)
-    S:Spacing()
-    S:Button("List My Probes", function()
-        local char = LocalPlayer.Character
-        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-        if not hrp then print("[Probes] No character"); return end
-        local list = getMyProbesSorted(hrp.Position)
-        if #list == 0 then
-            print("[Probes] No probes found for userId: " .. myUserId)
-            return
+    S:Button(
+        "Go to Nearest Probe",
+        function()
+            if tweenActive then
+                cancelTween()
+                notify("Cancelled", "", 2)
+                return
+            end
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if not hrp then
+                return
+            end
+            local list = getMyProbesSorted(hrp.Position)
+            if #list == 0 then
+                notify("No probes found for id: " .. myUserId, "", 3)
+                return
+            end
+            local entry = list[1]
+            notify(string.format("Going to probe #1 | %.0fm", entry.dist), "", 3)
+            tweenToTarget(entry.pos, true)
         end
-        print(string.format("[Probes] Found %d probe(s) for userId %s:", #list, myUserId))
-        for i, entry in ipairs(list) do
-            local p = entry.pos
-            print(string.format("  #%d | %.0fm away | %.0f, %.0f, %.0f",
-                i, entry.dist, p.X, p.Y, p.Z))
+    )
+    S:Spacing()
+    S:Button(
+        "Go to 2nd Closest Probe",
+        function()
+            goToProbeByRank(2)
         end
-    end)
+    )
+    S:Spacing()
+    S:Button(
+        "Go to 3rd Closest Probe",
+        function()
+            goToProbeByRank(3)
+        end
+    )
+    S:Spacing()
+    S:Button(
+        "List My Probes",
+        function()
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if not hrp then
+                print("[Probes] No character")
+                return
+            end
+            local list = getMyProbesSorted(hrp.Position)
+            if #list == 0 then
+                print("[Probes] No probes found for userId: " .. myUserId)
+                return
+            end
+            print(string.format("[Probes] Found %d probe(s) for userId %s:", #list, myUserId))
+            for i, entry in ipairs(list) do
+                local p = entry.pos
+                print(string.format("  #%d | %.0fm away | %.0f, %.0f, %.0f", i, entry.dist, p.X, p.Y, p.Z))
+            end
+        end
+    )
 end
 
 local function BuildCharBoost(Tab)
     local S = Tab:Section("Character Boost", "Left")
     S:Text("Hold keybind to boost on foot")
     S:Spacing()
-    S:Toggle("charboost_on", "Character Boost", cfg.CharBoost.Enabled, function(state)
-        cfg.CharBoost.Enabled = state
-        notify(state and "Character Boost ON" or "Character Boost OFF", "", 2)
-    end)
+    S:Toggle(
+        "charboost_on",
+        "Character Boost",
+        cfg.CharBoost.Enabled,
+        function(state)
+            cfg.CharBoost.Enabled = state
+            notify(state and "Character Boost ON" or "Character Boost OFF", "", 2)
+        end
+    )
     charBoostWidget = S:Keybind("charboost_kb", cfg.CharBoost.KeyVK, "hold")
     charBoostWidget:AddToHotkey("Character Boost", "charboost_on")
     S:Spacing()
     S:Text("5k=gentle  30k=normal  200k=fast")
-    S:SliderInt("charboost_force", "Force Amount", 5000, 200000, cfg.CharBoost.Force, function(v)
-        cfg.CharBoost.Force = v
-    end)
+    S:SliderInt(
+        "charboost_force",
+        "Force Amount",
+        5000,
+        200000,
+        cfg.CharBoost.Force,
+        function(v)
+            cfg.CharBoost.Force = v
+        end
+    )
     S:Spacing()
     S:Tip("Boosts on foot. Uses same lateral damping as Car Boost.")
 end
@@ -1278,100 +1707,142 @@ local function BuildFreeze(Tab)
     local S = Tab:Section("Anti-Sling / Freeze", "Right")
     S:Text("Prevents being flung by the tornado")
     S:Spacing()
-    S:Toggle("CarFreeze", "Car Freeze", cfg.CarFreeze.Enabled, function(state)
-        cfg.CarFreeze.Enabled = state
-        notify(state and "Car Freeze enabled" or "Car Freeze disabled", "", 2)
-    end)
+    S:Toggle(
+        "CarFreeze",
+        "Car Freeze",
+        cfg.CarFreeze.Enabled,
+        function(state)
+            cfg.CarFreeze.Enabled = state
+            notify(state and "Car Freeze enabled" or "Car Freeze disabled", "", 2)
+        end
+    )
     carFreezeWidget = S:Keybind("carfreeze_kb", cfg.CarFreeze.KeyVK, "toggle")
     carFreezeWidget:AddToHotkey("Car Freeze", "CarFreeze")
-    S:Toggle("CarFreezeSoft", "Soft (anti-fling)", cfg.CarFreeze.Soft, function(state)
-        cfg.CarFreeze.Soft = state
-        notify(state and "Car Freeze: soft anti-fling" or "Car Freeze: hard lock", "", 2)
-    end)
+    S:Toggle(
+        "CarFreezeSoft",
+        "Soft (anti-fling)",
+        cfg.CarFreeze.Soft,
+        function(state)
+            cfg.CarFreeze.Soft = state
+            notify(state and "Car Freeze: soft anti-fling" or "Car Freeze: hard lock", "", 2)
+        end
+    )
     S:Spacing()
-    S:Toggle("CharFreeze", "Character Freeze", cfg.CharacterFreeze.Enabled, function(state)
-        cfg.CharacterFreeze.Enabled = state
-        notify(state and "Character Freeze enabled" or "Character Freeze disabled", "", 2)
-    end)
+    S:Toggle(
+        "CharFreeze",
+        "Character Freeze",
+        cfg.CharacterFreeze.Enabled,
+        function(state)
+            cfg.CharacterFreeze.Enabled = state
+            notify(state and "Character Freeze enabled" or "Character Freeze disabled", "", 2)
+        end
+    )
     charFreezeWidget = S:Keybind("charfreeze_kb", cfg.CharacterFreeze.KeyVK, "toggle")
     charFreezeWidget:AddToHotkey("Character Freeze", "CharFreeze")
     S:Spacing()
-    S:Tip("Hard lock pins the chassis CFrame. Soft only zeroes velocity each frame, so the tornado lifts you slightly instead of flinging you.")
+    S:Tip(
+        "Hard lock pins the chassis CFrame. Soft only zeroes velocity each frame, so the tornado lifts you slightly instead of flinging you."
+    )
 end
-
 
 local function BuildDebug(Tab)
     local S = Tab:Section("Debug", "Left")
-    S:Button("Rescan Tornadoes", function()
-        local before = 0
-        for _ in pairs(tornadoData) do before = before + 1 end
-        scanTornadoes()
-        local after = 0
-        for _ in pairs(tornadoData) do after = after + 1 end
-        print(string.format("[Debug] Rescan: %d → %d tornadoes", before, after))
-        notify(string.format("Rescanned: %d tornado(s)", after), "", 3)
-    end)
-    S:Spacing()
-    S:Button("Active Tornadoes", function()
-        local count = 0
-        for _ in pairs(tornadoData) do count = count + 1 end
-        print("[Debug] Tornadoes tracked: " .. count)
-        for key, data in pairs(tornadoData) do
-            if data.part and data.part:IsDescendantOf(workspace) then
-                local p    = data.part.Position
-                local wind = readWindAttr(data.stormModel) or getSpeed(key)
-                print(string.format("  %s | %.0f,%.0f,%.0f | %.1f mph", key, p.X, p.Y, p.Z, wind))
+    S:Button(
+        "Rescan Tornadoes",
+        function()
+            local before = 0
+            for _ in pairs(tornadoData) do
+                before = before + 1
             end
+            scanTornadoes()
+            local after = 0
+            for _ in pairs(tornadoData) do
+                after = after + 1
+            end
+            print(string.format("[Debug] Rescan: %d → %d tornadoes", before, after))
+            notify(string.format("Rescanned: %d tornado(s)", after), "", 3)
         end
-    end)
+    )
     S:Spacing()
-    S:Button("Clear All Probe ESPs", function()
-        local dead = {}
-        for key in pairs(probeData) do dead[#dead + 1] = key end
-        for _, key in ipairs(dead) do
-            removeEntry(key)
-            activeKeys.probe[key] = nil
-            probeData[key]        = nil
-        end
-        scanProbes()
-        print("[Debug] Probe ESPs cleared and rescanned")
-    end)
-    S:Spacing()
-    S:Button("Active Probes", function()
-        local count = 0
-        for key, data in pairs(probeData) do
-            if data.realPart and data.realPart:IsDescendantOf(workspace) then
-                local p    = data.realPart.Position
-                local char = LocalPlayer.Character
-                local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-                local d    = hrp and (p - hrp.Position).Magnitude or 0
-                print(string.format("  %s | %.0fm", key, d))
+    S:Button(
+        "Active Tornadoes",
+        function()
+            local count = 0
+            for _ in pairs(tornadoData) do
                 count = count + 1
             end
+            print("[Debug] Tornadoes tracked: " .. count)
+            for key, data in pairs(tornadoData) do
+                if data.part and data.part:IsDescendantOf(workspace) then
+                    local p = data.part.Position
+                    local wind = readWindAttr(data.stormModel) or getSpeed(key)
+                    print(string.format("  %s | %.0f,%.0f,%.0f | %.1f mph", key, p.X, p.Y, p.Z, wind))
+                end
+            end
         end
-        print("[Debug] Total probes: " .. count)
-    end)
+    )
+    S:Spacing()
+    S:Button(
+        "Clear All Probe ESPs",
+        function()
+            local dead = {}
+            for key in pairs(probeData) do
+                dead[#dead + 1] = key
+            end
+            for _, key in ipairs(dead) do
+                removeEntry(key)
+                activeKeys.probe[key] = nil
+                probeData[key] = nil
+            end
+            scanProbes()
+            print("[Debug] Probe ESPs cleared and rescanned")
+        end
+    )
+    S:Spacing()
+    S:Button(
+        "Active Probes",
+        function()
+            local count = 0
+            for key, data in pairs(probeData) do
+                if data.realPart and data.realPart:IsDescendantOf(workspace) then
+                    local p = data.realPart.Position
+                    local char = LocalPlayer.Character
+                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                    local d = hrp and (p - hrp.Position).Magnitude or 0
+                    print(string.format("  %s | %.0fm", key, d))
+                    count = count + 1
+                end
+            end
+            print("[Debug] Total probes: " .. count)
+        end
+    )
 end
 
 loadConfig()
 syncTornadoColors()
 syncProbeColors()
 
-UI.AddTab("Storm Tracker", function(tab)
-    BuildESP(tab)
-    BuildTornadoCustom(tab)
-    BuildProbeCustom(tab)
-    BuildBoost(tab)
-    BuildBrake(tab)
-    BuildTween(tab)
-    BuildTweenProbe(tab)
-    BuildFreeze(tab)
-    BuildDebug(tab)
-end)
+UI.AddTab(
+    "Storm Tracker",
+    function(tab)
+        BuildESP(tab)
+        BuildTornadoCustom(tab)
+        BuildProbeCustom(tab)
+        BuildBoost(tab)
+        BuildBrake(tab)
+        BuildTween(tab)
+        BuildTweenProbe(tab)
+        BuildFreeze(tab)
+        BuildDebug(tab)
+    end
+)
 
-UI.AddTab("Storm Tracker 2", function(tab)
-    BuildCharBoost(tab)
-end)
+UI.AddTab(
+    "Storm Tracker 2",
+    function(tab)
+        BuildCharBoost(tab)
+    end
+)
 
 print("[Storm Tracker] Loaded")
 task.wait(2)
@@ -1379,165 +1850,194 @@ task.wait(2)
 local renderConn, heartbeatConn
 
 local function cleanup()
-    if renderConn then renderConn:Disconnect() end
-    if heartbeatConn then heartbeatConn:Disconnect() end
-    for key in pairs(espPool) do removeEntry(key) end
+    if renderConn then
+        renderConn:Disconnect()
+    end
+    if heartbeatConn then
+        heartbeatConn:Disconnect()
+    end
+    for key in pairs(espPool) do
+        removeEntry(key)
+    end
     speedHudLabel:Remove()
 end
 _G.StormTrackerCleanup = cleanup
 
-renderConn = RunService.RenderStepped:Connect(function(dt)
-    if not isrbxactive() then return end
+renderConn =
+    RunService.RenderStepped:Connect(
+    function(dt)
+        if not isrbxactive() then
+            return
+        end
 
-    if carFreezeWidget then
-        local cfActive = cfg.CarFreeze.Enabled and carFreezeWidget:IsEnabled()
-        if cfActive then
-            if freeze.active then
-                if freeze.chassis and freeze.chassis.Parent and freeze.prim and freeze.lockedPos then
-                    local fp  = freeze.prim
-                    local vb  = fp + OFF_VEL
-                    local ab  = fp + OFF_ANG_VEL
-                    if cfg.CarFreeze.Soft then
-                        freezeZeroVel(fp)
-                    else
-                        local pos = freeze.lockedPos
-                        local rot = freeze.lockedRot
-                        local pb  = fp + OFF_CF + OFF_POS
-                        local rb  = fp + OFF_CF
-                        memory_write("float", pb,       pos.X)
-                        memory_write("float", pb + 0x4, pos.Y)
-                        memory_write("float", pb + 0x8, pos.Z)
-                        memory_write("float", vb,       0)
-                        memory_write("float", vb + 0x4, 0)
-                        memory_write("float", vb + 0x8, 0)
-                        if rot then
-                            memory_write("float", rb,      rot[1])
-                            memory_write("float", rb + 4,  rot[2])
-                            memory_write("float", rb + 8,  rot[3])
-                            memory_write("float", rb + 12, rot[4])
-                            memory_write("float", rb + 16, rot[5])
-                            memory_write("float", rb + 20, rot[6])
-                            memory_write("float", rb + 24, rot[7])
-                            memory_write("float", rb + 28, rot[8])
-                            memory_write("float", rb + 32, rot[9])
+        if carFreezeWidget then
+            local cfActive = cfg.CarFreeze.Enabled and carFreezeWidget:IsEnabled()
+            if cfActive then
+                if freeze.active then
+                    if freeze.chassis and freeze.chassis.Parent and freeze.prim and freeze.lockedPos then
+                        local fp = freeze.prim
+                        local vb = fp + OFF_VEL
+                        local ab = fp + OFF_ANG_VEL
+                        if cfg.CarFreeze.Soft then
+                            freezeZeroVel(fp)
+                        else
+                            local pos = freeze.lockedPos
+                            local rot = freeze.lockedRot
+                            local pb = fp + OFF_CF + OFF_POS
+                            local rb = fp + OFF_CF
+                            memory_write("float", pb, pos.X)
+                            memory_write("float", pb + 0x4, pos.Y)
+                            memory_write("float", pb + 0x8, pos.Z)
+                            memory_write("float", vb, 0)
+                            memory_write("float", vb + 0x4, 0)
+                            memory_write("float", vb + 0x8, 0)
+                            if rot then
+                                memory_write("float", rb, rot[1])
+                                memory_write("float", rb + 4, rot[2])
+                                memory_write("float", rb + 8, rot[3])
+                                memory_write("float", rb + 12, rot[4])
+                                memory_write("float", rb + 16, rot[5])
+                                memory_write("float", rb + 20, rot[6])
+                                memory_write("float", rb + 24, rot[7])
+                                memory_write("float", rb + 28, rot[8])
+                                memory_write("float", rb + 32, rot[9])
+                            end
+                            memory_write("float", ab, 0)
+                            memory_write("float", ab + 0x4, 0)
+                            memory_write("float", ab + 0x8, 0)
                         end
-                        memory_write("float", ab,       0)
-                        memory_write("float", ab + 0x4, 0)
-                        memory_write("float", ab + 0x8, 0)
+                    else
+                        freeze.active = false
+                        applyCarFreeze()
                     end
                 else
-                    freeze.active = false
                     applyCarFreeze()
                 end
-            else
-                applyCarFreeze()
+            elseif freeze.active then
+                releaseCarFreeze()
             end
-        elseif freeze.active then
-            releaseCarFreeze()
+            if cfActive ~= _cfPrev then
+                _cfPrev = cfActive
+                notify(cfActive and "Car Freeze ON" or "Car Freeze OFF", "", 3)
+            end
         end
-        if cfActive ~= _cfPrev then
-            _cfPrev = cfActive
-            notify(cfActive and "Car Freeze ON" or "Car Freeze OFF", "", 3)
-        end
-    end
 
-    if charFreezeWidget then
-        local chActive = cfg.CharacterFreeze.Enabled and charFreezeWidget:IsEnabled()
-        if chActive then
-            if charFreeze.active then
-                if charFreeze.hrp and charFreeze.hrp.Parent and charFreeze.prim and charFreeze.lockedPos then
-                    local cp = charFreeze.prim
-                    local pp = charFreeze.lockedPos
-                    local pb = cp + OFF_CF + OFF_POS
-                    local vb = cp + OFF_VEL
-                    memory_write("float", pb,       pp.X)
-                    memory_write("float", pb + 0x4, pp.Y)
-                    memory_write("float", pb + 0x8, pp.Z)
-                    memory_write("float", vb,       0)
-                    memory_write("float", vb + 0x4, 0)
-                    memory_write("float", vb + 0x8, 0)
+        if charFreezeWidget then
+            local chActive = cfg.CharacterFreeze.Enabled and charFreezeWidget:IsEnabled()
+            if chActive then
+                if charFreeze.active then
+                    if charFreeze.hrp and charFreeze.hrp.Parent and charFreeze.prim and charFreeze.lockedPos then
+                        local cp = charFreeze.prim
+                        local pp = charFreeze.lockedPos
+                        local pb = cp + OFF_CF + OFF_POS
+                        local vb = cp + OFF_VEL
+                        memory_write("float", pb, pp.X)
+                        memory_write("float", pb + 0x4, pp.Y)
+                        memory_write("float", pb + 0x8, pp.Z)
+                        memory_write("float", vb, 0)
+                        memory_write("float", vb + 0x4, 0)
+                        memory_write("float", vb + 0x8, 0)
+                    else
+                        charFreeze.active = false
+                        applyCharFreeze()
+                    end
                 else
-                    charFreeze.active = false
                     applyCharFreeze()
                 end
+            elseif charFreeze.active then
+                releaseCharFreeze()
+            end
+            if chActive ~= _chPrev then
+                _chPrev = chActive
+                notify(chActive and "Character Freeze ON" or "Character Freeze OFF", "", 3)
+            end
+        end
+
+        if cfg.CarBoost.Enabled and boostWidget and boostWidget:IsEnabled() then
+            applyCarBoost()
+        end
+
+        if cfg.CarBrake.Enabled and brakeWidget and brakeWidget:IsEnabled() then
+            applyCarBrake()
+        end
+
+        if cfg.CharBoost.Enabled and charBoostWidget and charBoostWidget:IsEnabled() then
+            applyCharBoost(dt)
+        end
+
+        if cfg.Tween.Enabled and tweenWidget and tweenWidget:IsEnabled() then
+            if not _tweenPrev then
+                goToNearestTornado()
+            end
+            _tweenPrev = true
+        else
+            _tweenPrev = false
+        end
+    end
+)
+
+heartbeatConn =
+    RunService.Heartbeat:Connect(
+    function()
+        if not isrbxactive() then
+            return
+        end
+
+        local now = tick()
+        if now - lastScan >= 0.5 then
+            lastScan = now
+            if cfg.TornadoESP.Visible then
+                scanTornadoes()
+            end
+            if cfg.ProbeESP.Visible then
+                scanProbes()
+            end
+        end
+
+        if
+            cfg.CarFreeze.Enabled and cfg.CarFreeze.Soft and carFreezeWidget and carFreezeWidget:IsEnabled() and
+                freeze.active and
+                freeze.prim and
+                freeze.chassis and
+                freeze.chassis.Parent
+         then
+            freezeZeroVel(freeze.prim)
+        end
+
+        if now - lastEsp < 0.05 then
+            return
+        end
+        lastEsp = now
+        espFrame = espFrame + 1
+
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then
+            return
+        end
+        local playerPos = hrp.Position
+
+        updateTornadoEsp(playerPos)
+        updateProbeEsp(playerPos)
+
+        if cfg.SpeedHUD.Visible then
+            local prim = findCurrentPrim()
+            if prim then
+                local vb = prim + OFF_VEL
+                local svx = memory_read("float", vb)
+                local svz = memory_read("float", vb + 0x8)
+                local spd = math_floor(math.sqrt(svx * svx + svz * svz))
+                local cam = workspace.CurrentCamera
+                if cam then
+                    speedHudLabel.Position = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y - 60)
+                end
+                speedHudLabel.Text = spd .. " st/s"
+                speedHudLabel.Visible = true
             else
-                applyCharFreeze()
+                speedHudLabel.Visible = false
             end
-        elseif charFreeze.active then
-            releaseCharFreeze()
-        end
-        if chActive ~= _chPrev then
-            _chPrev = chActive
-            notify(chActive and "Character Freeze ON" or "Character Freeze OFF", "", 3)
-        end
-    end
-
-    if cfg.CarBoost.Enabled and boostWidget and boostWidget:IsEnabled() then
-        applyCarBoost()
-    end
-
-    if cfg.CarBrake.Enabled and brakeWidget and brakeWidget:IsEnabled() then
-        applyCarBrake()
-    end
-
-    if cfg.CharBoost.Enabled and charBoostWidget and charBoostWidget:IsEnabled() then
-        applyCharBoost(dt)
-    end
-
-    if cfg.Tween.Enabled and tweenWidget and tweenWidget:IsEnabled() then
-        if not _tweenPrev then goToNearestTornado() end
-        _tweenPrev = true
-    else
-        _tweenPrev = false
-    end
-
-end)
-
-heartbeatConn = RunService.Heartbeat:Connect(function()
-    if not isrbxactive() then return end
-
-    local now = tick()
-    if now - lastScan >= 0.5 then
-        lastScan = now
-        if cfg.TornadoESP.Visible then scanTornadoes() end
-        if cfg.ProbeESP.Visible then scanProbes() end
-    end
-
-    if cfg.CarFreeze.Enabled and cfg.CarFreeze.Soft and carFreezeWidget and carFreezeWidget:IsEnabled()
-        and freeze.active and freeze.prim and freeze.chassis and freeze.chassis.Parent then
-        freezeZeroVel(freeze.prim)
-    end
-
-    if now - lastEsp < 0.05 then return end
-    lastEsp = now
-    espFrame = espFrame + 1
-
-    local char = LocalPlayer.Character
-    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-    local playerPos = hrp.Position
-
-    updateTornadoEsp(playerPos)
-    updateProbeEsp(playerPos)
-
-    if cfg.SpeedHUD.Visible then
-        local prim = findCurrentPrim()
-        if prim then
-            local vb  = prim + OFF_VEL
-            local svx = memory_read("float", vb)
-            local svz = memory_read("float", vb + 0x8)
-            local spd = math_floor(math.sqrt(svx * svx + svz * svz))
-            local cam = workspace.CurrentCamera
-            if cam then
-                speedHudLabel.Position = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y - 60)
-            end
-            speedHudLabel.Text    = spd .. " st/s"
-            speedHudLabel.Visible = true
         else
             speedHudLabel.Visible = false
         end
-    else
-        speedHudLabel.Visible = false
     end
-end)
-
+)
